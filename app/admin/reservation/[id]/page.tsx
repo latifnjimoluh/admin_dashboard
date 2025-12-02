@@ -3,66 +3,64 @@
 import { useEffect, useState } from "react"
 import { useRouter, useParams } from "next/navigation"
 import { AdminLayout } from "@/components/admin/admin-layout"
-import { ArrowLeft, Plus, Download, Trash2, Printer, Edit2 } from "lucide-react"
+import { ArrowLeft, Plus, Download, Printer } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { VisuallyHidden } from "@radix-ui/react-visually-hidden"
+
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog"
+
+import { api } from "@/lib/api"
+
+// --------------------------------------------------------------
+// 🧩 INTERFACES 100 % ALIGNÉES BACKEND
+// --------------------------------------------------------------
+interface Participant {
+  id: string
+  name: string
+  phone: string | null
+  email: string | null
+}
 
 interface Payment {
   id: string
-  montant: number
-  mode: "MoMo" | "Cash"
-  date: string
-  admin: string
+  amount: number
+  method: string
+  createdAt: string
+  creator?: { name: string }
 }
 
-interface Participant {
-  id?: string
-  nom: string
-  tel?: string
-  email?: string
-  role: "Payeur" | "Participant"
+interface ActionLog {
+  id: string
+  action_type: string
+  createdAt: string
+  meta: any
 }
 
 interface ReservationData {
   id: string
-  nom: string
-  prenom: string
-  telephone: string
-  email: string
-  pack: "Simple" | "VIP" | "Couple" | "Famille" | "Stand Entreprise"
-  prixTotal: number
-  statut: "en_attente" | "partiel" | "payé" | "ticket_généré"
+  payeur_name: string
+  payeur_phone: string
+  payeur_email: string
+  pack_name: string
+  total_price: number
+  total_paid: number
+  remaining_amount: number
+  status: string
+  createdAt: string
+
   participants: Participant[]
-  paiements: Payment[]
-  historique: string[]
-  dateReservation: string
+  payments: Payment[]
+  actions: ActionLog[]
 }
 
-const packPrices = {
-  Simple: 15000,
-  VIP: 25000,
-  Couple: 50000,
-  Famille: 75000,
-  "Stand Entreprise": 100000,
-}
-
-const mockReservationData: ReservationData = {
-  id: "1",
-  nom: "Dupont",
-  prenom: "Jean",
-  telephone: "237 6 70 123 456",
-  email: "jean.dupont@email.com",
-  pack: "Couple",
-  prixTotal: 50000,
-  statut: "partiel",
-  participants: [
-    { id: "p1", nom: "Jean Dupont", tel: "237 6 70 123 456", email: "jean.dupont@email.com", role: "Payeur" },
-    { id: "p2", nom: "Marie Dupont", tel: "237 6 70 654 321", email: "marie.dupont@email.com", role: "Participant" },
-  ],
-  paiements: [{ id: "py1", montant: 25000, mode: "MoMo", date: "2024-11-27", admin: "Admin Asso" }],
-  historique: ["Jean Asso a créé la réservation", "Jean Asso a ajouté 25000 XAF"],
-  dateReservation: "2024-11-28",
-}
+// --------------------------------------------------------------
 
 export default function ReservationDetailsPage() {
   const router = useRouter()
@@ -70,624 +68,518 @@ export default function ReservationDetailsPage() {
   const reservationId = params.id as string
 
   const [isAuthenticated, setIsAuthenticated] = useState(false)
-  const [isLoading, setIsLoading] = useState(true)
-  const [reservation, setReservation] = useState<ReservationData>(mockReservationData)
+  const [loadingData, setLoadingData] = useState(true)
+  const [reservation, setReservation] = useState<ReservationData | null>(null)
+
   const [showAddPayment, setShowAddPayment] = useState(false)
   const [showQRCode, setShowQRCode] = useState(false)
+  const [ticketDataUrl, setTicketDataUrl] = useState<string | null>(null)
+  const [ticketCode, setTicketCode] = useState<string | null>(null)
+  const [ticketGenerating, setTicketGenerating] = useState(false)
+  const [ticketPdfUrl, setTicketPdfUrl] = useState<string | null>(null)
   const [showAdvancementPDF, setShowAdvancementPDF] = useState(false)
-  const [newPayment, setNewPayment] = useState({ montant: "", mode: "MoMo" })
 
-  const [showEditPayer, setShowEditPayer] = useState(false)
-  const [showEditPack, setShowEditPack] = useState(false)
-  const [showEditParticipant, setShowEditParticipant] = useState(false)
-  const [editingParticipantId, setEditingParticipantId] = useState<string | null>(null)
-  const [editPayerForm, setEditPayerForm] = useState(reservation)
-  const [editParticipantForm, setEditParticipantForm] = useState<Participant>({ nom: "", role: "Participant" })
-  const [selectedPack, setSelectedPack] = useState<keyof typeof packPrices>(reservation.pack)
+  const [newPayment, setNewPayment] = useState({ amount: "", method: "cash" })
+  
+  const mapActionDescription = (a: ActionLog) => {
+    if (a.meta?.description) return a.meta.description
 
+    if (a.action_type === "payment.add") {
+      return `Paiement ajouté : +${a.meta.amount} XAF (${a.meta.method})`
+    }
+    if (a.action_type === "payment.delete") {
+      return `Paiement supprimé : -${a.meta.amount} XAF`
+    }
+    if (a.action_type === "reservation.update") {
+      return `Modification des informations du payeur`
+    }
+    if (a.action_type === "pack.change") {
+      return `Changement de pack : ${a.meta.old} → ${a.meta.new}`
+    }
+
+    return a.action_type
+  }
+
+  // --------------------------------------------------------------
+  // 🔐 AUTH CHECK
+  // --------------------------------------------------------------
   useEffect(() => {
-    const token = localStorage.getItem("admin_token")
-    if (!token) {
+    if (!localStorage.getItem("admin_token")) {
       router.push("/admin/login")
     } else {
       setIsAuthenticated(true)
-      setIsLoading(false)
     }
   }, [router])
 
-  const totalPayé = reservation.paiements.reduce((sum, p) => sum + p.montant, 0)
-  const montantRestant = reservation.prixTotal - totalPayé
+  // --------------------------------------------------------------
+  // 📌 LOAD RESERVATION
+  // --------------------------------------------------------------
+  const loadReservation = async () => {
+    setLoadingData(true)
+    try {
+      const res = await api.reservations.getOne(reservationId)
 
-  const getStatutBadge = (statut: ReservationData["statut"]) => {
-    const variants = {
-      en_attente: "badge-en-attente",
-      partiel: "badge-partiel",
-      payé: "badge-paye",
-      ticket_généré: "badge-ticket-genere",
-    }
-    const labels = {
-      en_attente: "En attente",
-      partiel: "Partiel",
-      payé: "Payé",
-      ticket_généré: "Ticket généré",
-    }
-    return { className: variants[statut], label: labels[statut] }
-  }
-
-  const handleEditPayer = () => {
-    setReservation({
-      ...reservation,
-      nom: editPayerForm.nom,
-      prenom: editPayerForm.prenom,
-      telephone: editPayerForm.telephone,
-      email: editPayerForm.email,
-      historique: [...reservation.historique, "Infos du payeur modifiées"],
-    })
-    setShowEditPayer(false)
-  }
-
-  const handleEditPack = () => {
-    const newPrice = packPrices[selectedPack]
-    let newParticipants: Participant[] = [
-      { ...reservation.participants[0], nom: `${reservation.prenom} ${reservation.nom}` },
-    ]
-
-    if (selectedPack === "Couple" && reservation.participants.length > 1) {
-      newParticipants.push(reservation.participants[1])
-    } else if (selectedPack === "Famille") {
-      newParticipants = reservation.participants.slice(0, 5)
-    } else if (selectedPack === "Stand Entreprise") {
-      newParticipants = reservation.participants.slice(0, 3)
-    }
-
-    setReservation({
-      ...reservation,
-      pack: selectedPack,
-      prixTotal: newPrice,
-      participants: newParticipants,
-      historique: [...reservation.historique, `Pack changé en ${selectedPack}`],
-    })
-    setShowEditPack(false)
-  }
-
-  const handleEditParticipant = () => {
-    const updatedParticipants = reservation.participants.map((p) =>
-      p.id === editingParticipantId ? { ...p, ...editParticipantForm } : p,
-    )
-    setReservation({
-      ...reservation,
-      participants: updatedParticipants,
-      historique: [...reservation.historique, "Un participant a été modifié"],
-    })
-    setShowEditParticipant(false)
-  }
-
-  const handleDeleteParticipant = (participantId: string) => {
-    const updatedParticipants = reservation.participants.filter((p) => p.id !== participantId)
-    setReservation({
-      ...reservation,
-      participants: updatedParticipants,
-      historique: [...reservation.historique, "Un participant a été supprimé"],
-    })
-  }
-
-  const handleAddParticipant = () => {
-    const maxParticipants = reservation.pack === "Famille" ? 5 : reservation.pack === "Stand Entreprise" ? 3 : 1
-    if (reservation.participants.length < maxParticipants) {
-      const newParticipant: Participant = {
-        id: `p${Date.now()}`,
-        nom: "Nouveau participant",
-        tel: "",
-        email: "",
-        role: "Participant",
+      if (!res?.reservation) {
+        console.error("Réservation introuvable :", res)
+        return
       }
-      setReservation({
-        ...reservation,
-        participants: [...reservation.participants, newParticipant],
-        historique: [...reservation.historique, "Un participant a été ajouté"],
+
+      const r = res.reservation
+
+      const mapped: ReservationData = {
+        id: r.id,
+        payeur_name: r.payeur_name,
+        payeur_phone: r.payeur_phone,
+        payeur_email: r.payeur_email,
+
+        pack_name: r.pack_name_snapshot || r.pack?.name,
+        total_price: r.total_price,
+        total_paid: r.total_paid,
+        remaining_amount: r.remaining_amount,
+        status: r.status,
+        createdAt: r.createdAt,
+
+        participants: r.participants.map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          phone: p.phone,
+          email: p.email,
+        })),
+
+        payments: (r.payments || []).map((p: any) => ({
+          id: p.id,
+          amount: p.amount,
+          method: p.method,
+          createdAt: p.createdAt,
+          creator: p.creator,
+        })),
+
+        actions: r.actions,
+      }
+
+      setReservation(mapped)
+    } catch (err) {
+      console.error("Erreur récupération réservation:", err)
+    }
+    setLoadingData(false)
+  }
+
+  useEffect(() => {
+    if (isAuthenticated) loadReservation()
+  }, [isAuthenticated])
+
+  // --------------------------------------------------------------
+  // 🎨 BADGE STATUT
+  // --------------------------------------------------------------
+  const mapStatus = (status: string) => {
+    const variants: any = {
+      pending: { class: "badge-en-attente", label: "En attente" },
+      partial: { class: "badge-partiel", label: "Partiel" },
+      paid: { class: "badge-paye", label: "Payé" },
+      ticket_generated: { class: "badge-ticket-genere", label: "Ticket généré" },
+    }
+    return variants[status] || { class: "badge-en-attente", label: status }
+  }
+
+  if (!isAuthenticated || !reservation) return null
+
+  const badge = mapStatus(reservation.status)
+  const totalPayé = reservation.total_paid
+  const montantRestant = reservation.remaining_amount
+
+  // --------------------------------------------------------------
+  // 💵 AJOUTER UN PAIEMENT
+  // --------------------------------------------------------------
+  const handleAddPayment = async () => {
+    if (!newPayment.amount) return
+
+    try {
+      await api.payments.add(reservation.id, {
+        amount: Number(newPayment.amount),
+        method: newPayment.method,
       })
+
+      await loadReservation()
+      setShowAddPayment(false)
+      setNewPayment({ amount: "", method: "cash" })
+    } catch (err) {
+      console.error("Erreur ajout paiement :", err)
     }
   }
 
-  const handleAddPayment = () => {
-    if (!newPayment.montant) return
-
-    const payment: Payment = {
-      id: `py${reservation.paiements.length + 1}`,
-      montant: Number.parseInt(newPayment.montant),
-      mode: newPayment.mode as "MoMo" | "Cash",
-      date: new Date().toISOString().split("T")[0],
-      admin: "Admin Actuel",
-    }
-
-    const updatedPayments = [...reservation.paiements, payment]
-    const newTotalPayé = updatedPayments.reduce((sum, p) => sum + p.montant, 0)
-
-    let newStatut = reservation.statut
-    if (newTotalPayé > 0 && newTotalPayé < reservation.prixTotal) {
-      newStatut = "partiel"
-    } else if (newTotalPayé >= reservation.prixTotal) {
-      newStatut = "payé"
-    }
-
-    setReservation({
-      ...reservation,
-      paiements: updatedPayments,
-      statut: newStatut,
-      historique: [...reservation.historique, `Admin Actuel a ajouté ${payment.montant} XAF`],
-    })
-
-    setNewPayment({ montant: "", mode: "MoMo" })
-    setShowAddPayment(false)
+  // -----------------------------
+  // Génération d'un ticket image
+  // -----------------------------
+  const chooseImageForPack = (packName?: string) => {
+    if (!packName) return "/simple.jpg"
+    const name = packName.toLowerCase()
+    if (name.includes("vip")) return "/vip.jpg"
+    if (name.includes("famille") || name.includes("family")) return "/famille.jpg"
+    if (name.includes("couple")) return "/couple.jpg"
+    return "/simple.jpg"
   }
 
-  const handleDeletePayment = (paymentId: string) => {
-    const updatedPayments = reservation.paiements.filter((p) => p.id !== paymentId)
-    const newTotalPayé = updatedPayments.reduce((sum, p) => sum + p.montant, 0)
+  const handleGenerateTicket = async () => {
+    if (!reservation) return
+    setTicketGenerating(true)
+    try {
+      // Call backend to generate ticket (includes QR image and PDF)
+      const resp: any = await api.tickets.generate(reservation.id)
+      const ticket = resp.ticket || resp
 
-    let newStatut = reservation.statut
-    if (newTotalPayé === 0) {
-      newStatut = "en_attente"
-    } else if (newTotalPayé < reservation.prixTotal) {
-      newStatut = "partiel"
-    } else {
-      newStatut = "payé"
-    }
+      const ticketNumber = ticket.ticket_number || ticket.ticketNumber || null
+      const qrImagePath = ticket.qr_image_url || ticket.qrImageUrl || null
+      const pdfUrl = ticket.pdf_url || ticket.pdfUrl || null
 
-    setReservation({
-      ...reservation,
-      paiements: updatedPayments,
-      statut: newStatut,
-      historique: [...reservation.historique, "Un paiement a été supprimé"],
-    })
-  }
+      setTicketCode(ticketNumber)
+      if (pdfUrl) setTicketPdfUrl(pdfUrl.startsWith("http") ? pdfUrl : `http://localhost:3001${pdfUrl}`)
 
-  const handleGenerateTicket = () => {
-    if (montantRestant === 0) {
-      setReservation({
-        ...reservation,
-        statut: "ticket_généré",
-        historique: [...reservation.historique, "Admin Actuel a généré le ticket"],
-      })
+      // Build full QR URL if needed
+      let qrSrc = null
+      if (qrImagePath) {
+        qrSrc = qrImagePath.startsWith("http") ? qrImagePath : `http://localhost:3001${qrImagePath}`
+      }
+
+      // Load template and qr image
+      const templateSrc = chooseImageForPack(reservation.pack_name)
+      const imgTemplate = new Image()
+      imgTemplate.crossOrigin = "anonymous"
+      imgTemplate.src = templateSrc
+
+      const imgQr = new Image()
+      imgQr.crossOrigin = "anonymous"
+      if (qrSrc) imgQr.src = qrSrc
+
+      await Promise.all([
+        new Promise<void>((res, rej) => { imgTemplate.onload = () => res(); imgTemplate.onerror = rej }),
+        new Promise<void>((res, rej) => { if (!qrSrc) return res(); imgQr.onload = () => res(); imgQr.onerror = rej }),
+      ])
+
+      const canvas = document.createElement("canvas")
+      const ctx = canvas.getContext("2d")
+      if (!ctx) throw new Error("Impossible d'obtenir le contexte canvas")
+
+      const width = imgTemplate.naturalWidth || imgTemplate.width || 1200
+      const height = imgTemplate.naturalHeight || imgTemplate.height || 400
+      canvas.width = width
+      canvas.height = height
+
+      // Draw template
+      ctx.drawImage(imgTemplate, 0, 0, width, height)
+
+      // Draw QR on right side (adjust size)
+      if (qrSrc) {
+        const qrSize = Math.floor(Math.min(width, height) * 0.22)
+        const qrX = width - qrSize - Math.floor(width * 0.04)
+        const qrY = Math.floor(height * 0.06)
+        ctx.fillStyle = "rgba(255,255,255,0.0)"
+        ctx.drawImage(imgQr, qrX, qrY, qrSize, qrSize)
+      }
+
+      // Draw code (ticket number) in bottom-right rounded box
+      const boxWidth = Math.floor(width * 0.36)
+      const boxHeight = Math.floor(height * 0.18)
+      const boxX = width - boxWidth - Math.floor(width * 0.04)
+      const boxY = height - boxHeight - Math.floor(height * 0.06)
+
+      ctx.fillStyle = "rgba(0,0,0,0.55)"
+      const drawRoundedRect = (x: number, y: number, w: number, h: number, r: number) => {
+        ctx.beginPath()
+        ctx.moveTo(x + r, y)
+        ctx.arcTo(x + w, y, x + w, y + h, r)
+        ctx.arcTo(x + w, y + h, x, y + h, r)
+        ctx.arcTo(x, y + h, x, y, r)
+        ctx.arcTo(x, y, x + w, y, r)
+        ctx.closePath()
+        ctx.fill()
+      }
+      drawRoundedRect(boxX, boxY, boxWidth, boxHeight, Math.floor(boxHeight * 0.15))
+
+      ctx.fillStyle = "#ffffff"
+      const fontSize = Math.floor(boxHeight * 0.35)
+      ctx.font = `bold ${fontSize}px sans-serif`
+      ctx.textAlign = "center"
+      ctx.textBaseline = "middle"
+      ctx.fillText(ticketNumber || "", boxX + boxWidth / 2, boxY + boxHeight / 2 - (fontSize * 0.08))
+
+      ctx.font = `${Math.floor(boxHeight * 0.18)}px sans-serif`
+      ctx.fillText(`#${reservation.id.slice(0, 8)}`, boxX + boxWidth / 2, boxY + boxHeight / 2 + (fontSize * 0.6))
+
+      const dataUrl = canvas.toDataURL("image/png")
+      setTicketDataUrl(dataUrl)
       setShowQRCode(true)
+
+      // Refresh reservation status
+      await loadReservation()
+    } catch (err) {
+      console.error("Erreur génération ticket:", err)
+    } finally {
+      setTicketGenerating(false)
     }
   }
 
-  if (isLoading || !isAuthenticated) return null
+  // --------------------------------------------------------------
+  // 📄 GÉNÉRER PDF À PARTIR DU SCREENSHOT
+  // --------------------------------------------------------------
+  const generatePDF = async () => {
+    const element = document.getElementById("advancement-pdf")
+    if (!element) {
+      console.error("Élément PDF introuvable")
+      return
+    }
 
-  const badge = getStatutBadge(reservation.statut)
-  const maxParticipants = reservation.pack === "Famille" ? 5 : reservation.pack === "Stand Entreprise" ? 3 : 1
-  const canAddParticipant = reservation.participants.length < maxParticipants
+    try {
+      // Importer html2canvas dynamiquement
+      const html2canvas = (await import("html2canvas")).default
+      const { jsPDF } = await import("jspdf")
+
+      // Créer le canvas à partir de l'élément
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+        windowWidth: 800,
+        windowHeight: element.scrollHeight,
+      })
+
+      // Créer le PDF
+      const imgData = canvas.toDataURL("image/png")
+      const pdf = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      })
+
+      const pdfWidth = pdf.internal.pageSize.getWidth()
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width
+
+      pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight)
+      pdf.save(`bon_avancement_${reservation.id}.pdf`)
+    } catch (error) {
+      console.error("Erreur génération PDF:", error)
+      alert("Erreur lors de la génération du PDF")
+    }
+  }
+
+  // --------------------------------------------------------------
+  // 🚀 UI PAGE PRINCIPALE
+  // --------------------------------------------------------------
 
   return (
     <AdminLayout>
       <div className="space-y-6">
-        {/* Header */}
+
+        {/* HEADER */}
         <div className="flex items-center gap-4">
-          <button onClick={() => router.back()} className="p-2 hover:bg-secondary rounded-md transition-colors">
+          <button onClick={() => router.back()} className="p-2 hover:bg-secondary rounded-md">
             <ArrowLeft className="w-5 h-5" />
           </button>
+
           <div>
-            <h1 className="text-3xl font-bold text-foreground">Détails de la réservation</h1>
-            <p className="text-muted-foreground">ID: {reservation.id}</p>
+            <h1 className="text-3xl font-bold">Détails de la réservation</h1>
+            <p className="text-muted-foreground">ID : {reservation.id}</p>
           </div>
         </div>
 
-        {/* Main Content Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Column */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Section 1: Informations du Payeur */}
-            <div className="bg-card border border-border rounded-lg p-6">
-              <h2 className="text-xl font-semibold text-foreground mb-4">Informations du payeur</h2>
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <p className="text-muted-foreground">Nom</p>
-                  <p className="text-foreground font-medium">
-                    {reservation.prenom} {reservation.nom}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Téléphone</p>
-                  <p className="text-foreground font-medium">{reservation.telephone}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Email</p>
-                  <p className="text-foreground font-medium">{reservation.email}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Pack</p>
-                  <p className="text-foreground font-medium">{reservation.pack}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Prix Total</p>
-                  <p className="text-foreground font-medium">{reservation.prixTotal.toLocaleString()} XAF</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Statut</p>
-                  <span className={`badge ${badge.className}`}>{badge.label}</span>
-                </div>
-              </div>
-            </div>
+        {/* CONTENU */}
+        {loadingData ? (
+          <p className="text-muted-foreground">Chargement…</p>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            {/* LEFT SIDE */}
+            <div className="lg:col-span-2 space-y-6">
 
-            <div className="bg-card border border-border rounded-lg p-6">
-              <h2 className="text-xl font-semibold text-foreground mb-4">Modifier la réservation</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <button
-                  onClick={() => setShowEditPayer(true)}
-                  className="flex items-center gap-2 px-4 py-2 bg-secondary hover:bg-secondary/80 text-foreground rounded-md transition-colors font-medium text-sm"
-                >
-                  <Edit2 className="w-4 h-4" />
-                  Modifier infos du payeur
-                </button>
-                <button
-                  onClick={() => setShowEditPack(true)}
-                  className="flex items-center gap-2 px-4 py-2 bg-secondary hover:bg-secondary/80 text-foreground rounded-md transition-colors font-medium text-sm"
-                >
-                  <Edit2 className="w-4 h-4" />
-                  Changer le pack
-                </button>
-              </div>
-            </div>
+              {/* PAYEUR */}
+              <div className="bg-card border rounded-lg p-6">
+                <h2 className="text-xl font-semibold mb-4">Informations du payeur</h2>
 
-            {/* Section 2: Liste des Participants */}
-            <div className="bg-card border border-border rounded-lg p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold text-foreground">Participants</h2>
-                {canAddParticipant && (
-                  <button
-                    onClick={handleAddParticipant}
-                    className="flex items-center gap-2 px-3 py-2 bg-primary hover:bg-accent text-primary-foreground rounded-md transition-colors text-sm font-medium"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Ajouter
-                  </button>
-                )}
-              </div>
-              <div className="space-y-2">
-                {reservation.participants.map((participant) => (
-                  <div key={participant.id} className="flex items-center justify-between p-3 bg-secondary rounded-md">
-                    <div className="flex-1">
-                      <p className="text-foreground font-medium">{participant.nom}</p>
-                      {participant.tel && <p className="text-xs text-muted-foreground">{participant.tel}</p>}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge className="bg-primary/20 text-primary">{participant.role}</Badge>
-                      <button
-                        onClick={() => {
-                          setEditingParticipantId(participant.id || "")
-                          setEditParticipantForm(participant)
-                          setShowEditParticipant(true)
-                        }}
-                        className="p-1 hover:bg-blue-500/20 rounded transition-colors"
-                      >
-                        <Edit2 className="w-4 h-4 text-blue-600" />
-                      </button>
-                      {participant.role === "Participant" && (
-                        <button
-                          onClick={() => handleDeleteParticipant(participant.id || "")}
-                          className="p-1 hover:bg-red-500/20 rounded transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4 text-red-600" />
-                        </button>
-                      )}
-                    </div>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <p className="text-muted-foreground">Nom</p>
+                    <p className="font-medium">{reservation.payeur_name}</p>
                   </div>
-                ))}
-              </div>
-            </div>
 
-            {/* Section 3: Tableau des Paiements */}
-            <div className="bg-card border border-border rounded-lg p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold text-foreground">Paiements</h2>
-                <button
-                  onClick={() => setShowAddPayment(true)}
-                  className="flex items-center gap-2 px-3 py-2 bg-primary hover:bg-accent text-primary-foreground rounded-md transition-colors text-sm font-medium"
-                >
-                  <Plus className="w-4 h-4" />
-                  Ajouter
-                </button>
+                  <div>
+                    <p className="text-muted-foreground">Téléphone</p>
+                    <p className="font-medium">{reservation.payeur_phone}</p>
+                  </div>
+
+                  <div>
+                    <p className="text-muted-foreground">Email</p>
+                    <p className="font-medium">{reservation.payeur_email}</p>
+                  </div>
+
+                  <div>
+                    <p className="text-muted-foreground">Pack</p>
+                    <p className="font-medium">{reservation.pack_name}</p>
+                  </div>
+
+                  <div>
+                    <p className="text-muted-foreground">Prix total</p>
+                    <p className="font-medium">{reservation.total_price.toLocaleString()} XAF</p>
+                  </div>
+
+                  <div>
+                    <p className="text-muted-foreground">Statut</p>
+                    <span className={`badge ${badge.class}`}>{badge.label}</span>
+                  </div>
+                </div>
               </div>
 
-              <div className="overflow-x-auto border border-border rounded-lg">
+              {/* PARTICIPANTS */}
+              <div className="bg-card border rounded-lg p-6">
+                <h2 className="text-xl font-semibold mb-4">Participants</h2>
+
+                <div className="space-y-3">
+                  {reservation.participants.map((p) => (
+                    <div key={p.id} className="p-3 bg-secondary rounded-md">
+                      <p className="font-medium">{p.name}</p>
+                      {p.email && <p className="text-xs text-muted-foreground">{p.email}</p>}
+                      {p.phone && <p className="text-xs text-muted-foreground">{p.phone}</p>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* PAYMENTS */}
+              <div className="bg-card border rounded-lg p-6">
+                <div className="flex justify-between mb-4">
+                  <h2 className="text-xl font-semibold">Paiements</h2>
+
+                  <button
+                    onClick={() => setShowAddPayment(true)}
+                    className="flex items-center gap-2 px-3 py-2 bg-primary text-primary-foreground rounded-md"
+                  >
+                    <Plus className="w-4 h-4" /> Ajouter
+                  </button>
+                </div>
+
                 <table className="w-full text-sm">
                   <thead>
                     <tr>
                       <th className="text-left">Montant</th>
-                      <th className="text-left">Mode</th>
+                      <th className="text-left">Méthode</th>
                       <th className="text-left">Date</th>
                       <th className="text-left">Admin</th>
-                      <th className="text-right">Actions</th>
                     </tr>
                   </thead>
+
                   <tbody>
-                    {reservation.paiements.map((payment) => (
-                      <tr key={payment.id}>
-                        <td className="font-medium">{payment.montant.toLocaleString()} XAF</td>
-                        <td>{payment.mode}</td>
-                        <td className="text-muted-foreground">{payment.date}</td>
-                        <td className="text-muted-foreground">{payment.admin}</td>
-                        <td className="text-right">
-                          <button
-                            onClick={() => handleDeletePayment(payment.id)}
-                            className="p-1 hover:bg-red-500/20 rounded transition-colors"
-                          >
-                            <Trash2 className="w-4 h-4 text-red-600" />
-                          </button>
-                        </td>
+                    {reservation.payments.map((p) => (
+                      <tr key={p.id}>
+                        <td className="font-medium">{p.amount.toLocaleString()} XAF</td>
+                        <td>{p.method}</td>
+                        <td>{new Date(p.createdAt).toLocaleDateString("fr-FR")}</td>
+                        <td>{p.creator?.name || "Admin"}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+
+              {/* ACTION LOGS */}
+              <div className="bg-card border rounded-lg p-6">
+                <h2 className="text-xl font-semibold mb-4">Historique des actions</h2>
+
+                <div className="space-y-3">
+                  {reservation.actions.map((a) => (
+                    <div key={a.id} className="p-3 bg-secondary rounded-md text-sm">
+                      <p className="font-medium">{mapActionDescription(a)}</p>                      
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(a.createdAt).toLocaleString("fr-FR")}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
             </div>
 
-            {/* Section 6: Historique */}
-            <div className="bg-card border border-border rounded-lg p-6">
-              <h2 className="text-xl font-semibold text-foreground mb-4">Historique des actions</h2>
-              <div className="space-y-2">
-                {reservation.historique.map((action, index) => (
-                  <div key={index} className="flex items-start gap-3 p-3 bg-secondary rounded-md">
-                    <div className="w-1 h-1 mt-2 rounded-full bg-primary flex-shrink-0"></div>
-                    <p className="text-sm text-foreground">{action}</p>
+            {/* RIGHT SUMMARY */}
+            <div className="space-y-6">
+              <div className="bg-card border rounded-lg p-6">
+                <h2 className="text-lg font-semibold mb-4">Résumé paiement</h2>
+
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-muted-foreground text-sm">Total payé</p>
+                    <p className="text-2xl font-bold text-green-600">{totalPayé.toLocaleString()} XAF</p>
                   </div>
-                ))}
+
+                  <div>
+                    <p className="text-muted-foreground text-sm">Montant restant</p>
+                    <p className="text-2xl font-bold text-orange-600">{montantRestant.toLocaleString()} XAF</p>
+                  </div>
+                </div>
+
+                <div className="mt-6 space-y-2">
+                  {montantRestant > 0 && (
+                    <button
+                      onClick={() => setShowAdvancementPDF(true)}
+                      className="w-full flex items-center justify-center bg-orange-600 text-white px-4 py-2 rounded-md"
+                    >
+                      <Download className="w-4 h-4 mr-2" />
+                      Bon d'avancement
+                    </button>
+                  )}
+
+                  {montantRestant === 0 && (
+                    <button
+                      onClick={() => handleGenerateTicket()}
+                      className="w-full bg-primary text-primary-foreground px-4 py-2 rounded-md"
+                    >
+                      Générer ticket
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
+
           </div>
-
-          {/* Right Column - Summary */}
-          <div className="space-y-6">
-            {/* Payment Summary */}
-            <div className="bg-card border border-border rounded-lg p-6">
-              <h2 className="text-lg font-semibold text-foreground mb-4">Résumé paiement</h2>
-              <div className="space-y-3">
-                <div>
-                  <p className="text-sm text-muted-foreground">Total payé</p>
-                  <p className="text-2xl font-bold text-green-600">{totalPayé.toLocaleString()} XAF</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Montant restant</p>
-                  <p className="text-2xl font-bold text-orange-600">{montantRestant.toLocaleString()} XAF</p>
-                </div>
-                <div className="pt-3 border-t border-border">
-                  <p className="text-sm text-muted-foreground">Statut actuel</p>
-                  <span className={`badge ${badge.className} mt-2`}>{badge.label}</span>
-                </div>
-              </div>
-
-              <div className="mt-6 space-y-2">
-                {montantRestant > 0 && (
-                  <button
-                    onClick={() => setShowAdvancementPDF(true)}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-md transition-colors font-medium text-sm"
-                  >
-                    <Download className="w-4 h-4" />
-                    Bon d'avancement
-                  </button>
-                )}
-
-                {montantRestant === 0 && (
-                  <button
-                    onClick={handleGenerateTicket}
-                    className="w-full px-4 py-2 bg-primary hover:bg-accent text-primary-foreground rounded-md transition-colors font-medium text-sm"
-                  >
-                    Générer ticket
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
+        )}
       </div>
 
-      <Dialog open={showEditPayer} onOpenChange={setShowEditPayer}>
-        <DialogContent className="bg-card border border-border">
-          <DialogHeader>
-            <DialogTitle className="text-foreground">Modifier infos du payeur</DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-2">Prénom</label>
-              <input
-                type="text"
-                value={editPayerForm.prenom}
-                onChange={(e) => setEditPayerForm({ ...editPayerForm, prenom: e.target.value })}
-                className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-2">Nom</label>
-              <input
-                type="text"
-                value={editPayerForm.nom}
-                onChange={(e) => setEditPayerForm({ ...editPayerForm, nom: e.target.value })}
-                className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-2">Téléphone</label>
-              <input
-                type="tel"
-                value={editPayerForm.telephone}
-                onChange={(e) => setEditPayerForm({ ...editPayerForm, telephone: e.target.value })}
-                className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-2">Email</label>
-              <input
-                type="email"
-                value={editPayerForm.email}
-                onChange={(e) => setEditPayerForm({ ...editPayerForm, email: e.target.value })}
-                className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <button
-              onClick={() => setShowEditPayer(false)}
-              className="px-4 py-2 bg-secondary hover:bg-secondary/80 text-foreground rounded-md transition-colors font-medium text-sm"
-            >
-              Annuler
-            </button>
-            <button
-              onClick={handleEditPayer}
-              className="px-4 py-2 bg-primary hover:bg-accent text-primary-foreground rounded-md transition-colors font-medium text-sm"
-            >
-              Modifier
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={showEditPack} onOpenChange={setShowEditPack}>
-        <DialogContent className="bg-card border border-border">
-          <DialogHeader>
-            <DialogTitle className="text-foreground">Changer le pack</DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-3">Sélectionner le pack</label>
-              <div className="space-y-2">
-                {Object.entries(packPrices).map(([packName, price]) => (
-                  <label
-                    key={packName}
-                    className="flex items-center gap-3 p-3 border border-border rounded-md hover:bg-secondary cursor-pointer"
-                  >
-                    <input
-                      type="radio"
-                      name="pack"
-                      value={packName}
-                      checked={selectedPack === packName}
-                      onChange={(e) => setSelectedPack(e.target.value as keyof typeof packPrices)}
-                      className="w-4 h-4"
-                    />
-                    <span className="flex-1 text-foreground">
-                      {packName} - {price.toLocaleString()} XAF
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <button
-              onClick={() => setShowEditPack(false)}
-              className="px-4 py-2 bg-secondary hover:bg-secondary/80 text-foreground rounded-md transition-colors font-medium text-sm"
-            >
-              Annuler
-            </button>
-            <button
-              onClick={handleEditPack}
-              className="px-4 py-2 bg-primary hover:bg-accent text-primary-foreground rounded-md transition-colors font-medium text-sm"
-            >
-              Changer
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={showEditParticipant} onOpenChange={setShowEditParticipant}>
-        <DialogContent className="bg-card border border-border">
-          <DialogHeader>
-            <DialogTitle className="text-foreground">Modifier participant</DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-2">Nom</label>
-              <input
-                type="text"
-                value={editParticipantForm.nom}
-                onChange={(e) => setEditParticipantForm({ ...editParticipantForm, nom: e.target.value })}
-                className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-2">Téléphone</label>
-              <input
-                type="tel"
-                value={editParticipantForm.tel}
-                onChange={(e) => setEditParticipantForm({ ...editParticipantForm, tel: e.target.value })}
-                className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-2">Email</label>
-              <input
-                type="email"
-                value={editParticipantForm.email}
-                onChange={(e) => setEditParticipantForm({ ...editParticipantForm, email: e.target.value })}
-                className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <button
-              onClick={() => setShowEditParticipant(false)}
-              className="px-4 py-2 bg-secondary hover:bg-secondary/80 text-foreground rounded-md transition-colors font-medium text-sm"
-            >
-              Annuler
-            </button>
-            <button
-              onClick={handleEditParticipant}
-              className="px-4 py-2 bg-primary hover:bg-accent text-primary-foreground rounded-md transition-colors font-medium text-sm"
-            >
-              Modifier
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add Payment Dialog */}
+      {/* AJOUT PAIEMENT */}
       <Dialog open={showAddPayment} onOpenChange={setShowAddPayment}>
-        <DialogContent className="bg-card border border-border">
+        <DialogContent className="bg-card border rounded-lg">
           <DialogHeader>
-            <DialogTitle className="text-foreground">Ajouter un paiement</DialogTitle>
+            <DialogTitle>Ajouter un paiement</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
             <div>
-              <label className="block text-sm font-medium text-foreground mb-2">Montant (XAF)</label>
+              <label className="text-sm">Montant</label>
               <input
                 type="number"
-                value={newPayment.montant}
-                onChange={(e) => setNewPayment({ ...newPayment, montant: e.target.value })}
-                placeholder="Ex: 25000"
-                className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
+                value={newPayment.amount}
+                onChange={(e) => setNewPayment({ ...newPayment, amount: e.target.value })}
+                className="w-full px-3 py-2 bg-input border rounded-md"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-foreground mb-2">Mode de paiement</label>
+              <label className="text-sm">Méthode</label>
               <select
-                value={newPayment.mode}
-                onChange={(e) => setNewPayment({ ...newPayment, mode: e.target.value })}
-                className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
+                value={newPayment.method}
+                onChange={(e) => setNewPayment({ ...newPayment, method: e.target.value })}
+                className="w-full px-3 py-2 bg-input border rounded-md"
               >
-                <option value="MoMo">Mobile Money (MoMo)</option>
-                <option value="Cash">Espèces (Cash)</option>
+                <option value="cash">Cash</option>
+                <option value="momo">Mobile Money</option>
               </select>
             </div>
           </div>
 
           <DialogFooter>
-            <button
-              onClick={() => setShowAddPayment(false)}
-              className="px-4 py-2 bg-secondary hover:bg-secondary/80 text-foreground rounded-md transition-colors font-medium text-sm"
-            >
+            <button onClick={() => setShowAddPayment(false)} className="px-4 py-2 bg-secondary rounded-md">
               Annuler
             </button>
+
             <button
               onClick={handleAddPayment}
-              className="px-4 py-2 bg-primary hover:bg-accent text-primary-foreground rounded-md transition-colors font-medium text-sm"
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
             >
               Ajouter
             </button>
@@ -695,131 +587,253 @@ export default function ReservationDetailsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showAdvancementPDF} onOpenChange={setShowAdvancementPDF}>
-        <DialogContent className="max-w-2xl max-h-screen overflow-y-auto bg-white border border-gray-300">
-          <div id="advancement-pdf" className="p-8 bg-white space-y-6">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b pb-4">
-              <div className="text-center flex-1">
-                <h1 className="text-2xl font-bold text-gray-900">Movie in the Park</h1>
-                <p className="text-sm text-gray-600">Bon d'avancement</p>
-              </div>
-            </div>
+      {/* QR CODE */}
+      <Dialog open={showQRCode} onOpenChange={setShowQRCode}>
+        <DialogContent className="bg-card border rounded-lg max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Ticket généré</DialogTitle>
+          </DialogHeader>
 
-            {/* Payer Info */}
-            <div className="space-y-4">
-              <div>
-                <h2 className="text-sm font-semibold text-gray-700 uppercase">Informations du payeur</h2>
-                <div className="grid grid-cols-2 gap-4 mt-2 text-sm">
-                  <div>
-                    <p className="text-gray-600">Nom</p>
-                    <p className="font-medium text-gray-900">
-                      {reservation.prenom} {reservation.nom}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-gray-600">Téléphone</p>
-                    <p className="font-medium text-gray-900">{reservation.telephone}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-600">Email</p>
-                    <p className="font-medium text-gray-900">{reservation.email}</p>
-                  </div>
-                </div>
-              </div>
+          <div className="py-6 text-center">
+            {ticketGenerating ? (
+              <p>Génération du ticket…</p>
+            ) : (
+              <>
+                {ticketDataUrl ? (
+                  <>
+                    <img src={ticketDataUrl} alt="Ticket" className="mx-auto w-full rounded-md shadow-md" />
+                    <p className="font-semibold mt-3">Code : {ticketCode}</p>
+                    <p className="text-sm text-muted-foreground">{reservation.payeur_name}</p>
 
-              {/* Reservation Details */}
-              <div className="bg-gray-50 p-4 rounded-lg space-y-3 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Pack choisi:</span>
-                  <span className="font-medium text-gray-900">{reservation.pack}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Prix total:</span>
-                  <span className="font-medium text-gray-900">{reservation.prixTotal.toLocaleString()} XAF</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Total payé:</span>
-                  <span className="font-medium text-green-700">{totalPayé.toLocaleString()} XAF</span>
-                </div>
-                <div className="border-t border-gray-200 pt-3 flex justify-between font-bold text-base">
-                  <span>Montant restant:</span>
-                  <span className="text-orange-700">{montantRestant.toLocaleString()} XAF</span>
-                </div>
-              </div>
-
-              {/* Date */}
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Date de génération:</span>
-                <span className="font-medium text-gray-900">{new Date().toLocaleDateString("fr-FR")}</span>
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="border-t pt-4 text-center text-xs text-gray-600">
-              <p>Document simulé – Movie in the Park</p>
-              <p>Réservation #{reservation.id}</p>
-            </div>
+                    <a
+                      href={ticketDataUrl}
+                      download={`ticket_${ticketCode || reservation.id}.png`}
+                      className="mt-4 inline-block w-full bg-primary text-primary-foreground rounded-md px-4 py-2 text-center"
+                    >
+                      <Download className="w-4 h-4 inline mr-2" /> Télécharger
+                    </a>
+                    {ticketPdfUrl && (
+                      <a
+                        href={ticketPdfUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-2 inline-block w-full bg-secondary text-gray-900 rounded-md px-4 py-2 text-center"
+                      >
+                        Ouvrir PDF serveur
+                      </a>
+                    )}
+                  </>
+                ) : (
+                  <p>Impossible de générer le ticket.</p>
+                )}
+              </>
+            )}
           </div>
-
-          <DialogFooter className="bg-gray-50 p-4">
-            <button
-              onClick={() => setShowAdvancementPDF(false)}
-              className="px-4 py-2 bg-secondary hover:bg-secondary/80 text-foreground rounded-md transition-colors font-medium text-sm"
-            >
-              Fermer
-            </button>
-            <button
-              onClick={() => window.print()}
-              className="px-4 py-2 bg-primary hover:bg-accent text-primary-foreground rounded-md transition-colors font-medium text-sm flex items-center gap-2"
-            >
-              <Printer className="w-4 h-4" />
-              Télécharger PDF
-            </button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* QR Code Modal */}
-      <Dialog open={showQRCode} onOpenChange={setShowQRCode}>
-        <DialogContent className="bg-card border border-border max-w-sm">
+      {/* -------------------------------------------------------- */}
+      {/* BON D'AVANCEMENT – DESIGN EXACT DE L'IMAGE              */}
+      {/* -------------------------------------------------------- */}
+      <Dialog open={showAdvancementPDF} onOpenChange={setShowAdvancementPDF}>
+        <DialogContent className="max-w-2xl max-h-screen overflow-y-auto bg-white">
           <DialogHeader>
-            <DialogTitle className="text-foreground">Ticket généré</DialogTitle>
+            <VisuallyHidden>
+              <DialogTitle>Bon d'avancement</DialogTitle>
+              <DialogDescription>Document retraçant les paiements</DialogDescription>
+            </VisuallyHidden>
           </DialogHeader>
 
-          <div className="flex flex-col items-center py-6 space-y-4">
-            <div className="w-48 h-48 bg-white p-4 rounded-lg flex items-center justify-center">
-              <svg viewBox="0 0 100 100" className="w-full h-full">
-                <rect width="100" height="100" fill="white" />
-                <rect x="10" y="10" width="30" height="30" fill="black" />
-                <rect x="60" y="10" width="30" height="30" fill="black" />
-                <rect x="10" y="60" width="30" height="30" fill="black" />
-                <rect x="20" y="20" width="10" height="10" fill="white" />
-                <rect x="70" y="20" width="10" height="10" fill="white" />
-                <rect x="20" y="70" width="10" height="10" fill="white" />
-                <rect x="50" y="50" width="30" height="30" fill="black" />
-                <text x="50" y="95" textAnchor="middle" fontSize="8" fill="black">
-                  TICKET-{reservation.id}
-                </text>
-              </svg>
+          {/* BON STRUCTURÉ - EXACTEMENT COMME L'IMAGE */}
+          <div 
+            id="advancement-pdf" 
+            className="bg-white text-black"
+            style={{ 
+              width: "700px", 
+              padding: "40px",
+              fontFamily: "system-ui, -apple-system, sans-serif"
+            }}
+          >
+            {/* HEADER */}
+            <div style={{ 
+              display: "flex", 
+              justifyContent: "space-between", 
+              alignItems: "flex-start",
+              borderBottom: "1px solid #e5e7eb",
+              paddingBottom: "20px",
+              marginBottom: "30px"
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+                <img
+                  src={`${typeof window !== "undefined" ? window.location.origin : ""}/logo.png`}
+                  style={{ width: "64px", height: "64px", objectFit: "contain" }}
+                  alt="Logo"
+                />
+                <div>
+                  <h1 style={{ fontSize: "24px", fontWeight: "700", margin: "0 0 4px 0" }}>
+                    Movie in the Park
+                  </h1>
+                  <p style={{ fontSize: "14px", color: "#6b7280", margin: "0" }}>
+                    Bon d'avancement
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ textAlign: "right" }}>
+                <p style={{ fontSize: "12px", color: "#6b7280", margin: "0 0 4px 0" }}>
+                  Date d'émission
+                </p>
+                <p style={{ fontSize: "14px", fontWeight: "600", margin: "0" }}>
+                  {new Date().toLocaleDateString("fr-FR")}
+                </p>
+              </div>
             </div>
 
-            <div className="text-center w-full">
-              <p className="text-sm text-muted-foreground mb-2">Numéro de ticket</p>
-              <p className="text-lg font-semibold text-foreground">TICKET-{reservation.id}</p>
-              <p className="text-xs text-muted-foreground mt-2">
-                {reservation.prenom} {reservation.nom}
+            {/* INFORMATIONS DU PAYEUR */}
+            <div style={{ marginBottom: "30px" }}>
+              <h2 style={{ 
+                fontSize: "14px", 
+                fontWeight: "600", 
+                textTransform: "uppercase",
+                color: "#374151",
+                marginBottom: "16px",
+                letterSpacing: "0.05em"
+              }}>
+                Informations du payeur
+              </h2>
+
+              <div style={{ 
+                display: "grid", 
+                gridTemplateColumns: "1fr 1fr", 
+                gap: "16px",
+                fontSize: "14px"
+              }}>
+                <div>
+                  <p style={{ fontSize: "12px", color: "#6b7280", margin: "0 0 4px 0" }}>
+                    Nom complet
+                  </p>
+                  <p style={{ fontWeight: "500", margin: "0" }}>
+                    {reservation.payeur_name}
+                  </p>
+                </div>
+
+                <div>
+                  <p style={{ fontSize: "12px", color: "#6b7280", margin: "0 0 4px 0" }}>
+                    Téléphone
+                  </p>
+                  <p style={{ fontWeight: "500", margin: "0" }}>
+                    {reservation.payeur_phone}
+                  </p>
+                </div>
+
+                <div>
+                  <p style={{ fontSize: "12px", color: "#6b7280", margin: "0 0 4px 0" }}>
+                    Email
+                  </p>
+                  <p style={{ fontWeight: "500", margin: "0" }}>
+                    {reservation.payeur_email}
+                  </p>
+                </div>
+
+                <div>
+                  <p style={{ fontSize: "12px", color: "#6b7280", margin: "0 0 4px 0" }}>
+                    Pack
+                  </p>
+                  <p style={{ fontWeight: "500", margin: "0" }}>
+                    {reservation.pack_name}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* DÉTAILS DU PAIEMENT */}
+            <div style={{ 
+              border: "1px solid #e5e7eb", 
+              borderRadius: "8px", 
+              padding: "24px",
+              marginBottom: "30px"
+            }}>
+              <h2 style={{ 
+                fontSize: "14px", 
+                fontWeight: "600",
+                color: "#374151",
+                marginBottom: "16px"
+              }}>
+                Détails du paiement
+              </h2>
+
+              <div style={{ fontSize: "14px" }}>
+                <div style={{ 
+                  display: "flex", 
+                  justifyContent: "space-between", 
+                  marginBottom: "12px" 
+                }}>
+                  <span style={{ color: "#6b7280" }}>Prix total</span>
+                  <span style={{ fontWeight: "600" }}>
+                    {reservation.total_price.toLocaleString()} XAF
+                  </span>
+                </div>
+
+                <div style={{ 
+                  display: "flex", 
+                  justifyContent: "space-between", 
+                  marginBottom: "12px" 
+                }}>
+                  <span style={{ color: "#6b7280" }}>Montant payé</span>
+                  <span style={{ fontWeight: "600", color: "#16a34a" }}>
+                    {reservation.total_paid.toLocaleString()} XAF
+                  </span>
+                </div>
+
+                <div style={{ 
+                  borderTop: "1px solid #e5e7eb", 
+                  paddingTop: "12px",
+                  display: "flex", 
+                  justifyContent: "space-between"
+                }}>
+                  <span style={{ fontWeight: "700" }}>Montant restant</span>
+                  <span style={{ fontWeight: "700", fontSize: "18px", color: "#ea580c" }}>
+                    {reservation.remaining_amount.toLocaleString()} XAF
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* FOOTER */}
+            <div style={{ 
+              textAlign: "center", 
+              fontSize: "11px", 
+              color: "#6b7280",
+              borderTop: "1px solid #e5e7eb",
+              paddingTop: "20px"
+            }}>
+              <p style={{ margin: "0 0 4px 0" }}>
+                Document généré automatiquement — Movie in the Park
+              </p>
+              <p style={{ margin: "0" }}>
+                Réservation #{reservation.id}
               </p>
             </div>
+          </div>
+
+          {/* BUTTONS */}
+          <DialogFooter className="bg-gray-50 p-4">
+            <button
+              onClick={() => setShowAdvancementPDF(false)}
+              className="px-4 py-2 bg-secondary text-gray-900 rounded-md"
+            >
+              Fermer
+            </button>
 
             <button
-              onClick={() => window.print()}
-              className="w-full px-4 py-2 bg-primary hover:bg-accent text-primary-foreground rounded-md transition-colors font-medium text-sm flex items-center justify-center gap-2"
+              onClick={generatePDF}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-md flex items-center gap-2"
             >
-              <Printer className="w-4 h-4" />
-              Télécharger Ticket
+              <Download className="w-4 h-4" />
+              Télécharger PDF
             </button>
-          </div>
+          </DialogFooter>
+
         </DialogContent>
       </Dialog>
     </AdminLayout>

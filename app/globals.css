@@ -43,6 +43,15 @@
   --subtitle-color: #444444;
 }
 
+.pdf-clean * {
+  box-shadow: none !important;
+  text-shadow: none !important;
+  filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+
 .dark {
   /* Movie in the Park Theme - Dark Mode */
   --background: #0a0a0a;

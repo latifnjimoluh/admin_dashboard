@@ -2,12 +2,25 @@
 
 import { useRouter } from "next/navigation"
 import { LogOut } from "lucide-react"
+import { api } from "@/lib/api"
 
 export function LogoutButton() {
   const router = useRouter()
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      // Appel API (optionnel mais propre)
+      await api.auth.logout()
+    } catch {
+      // Même si erreur, on déconnecte quand même
+    }
+
+    // Suppression des données locales
     localStorage.removeItem("admin_token")
+    localStorage.removeItem("admin_refresh_token")
+    localStorage.removeItem("admin_role")
+
+    // Redirection vers login
     router.push("/admin/login")
   }
 

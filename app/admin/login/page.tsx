@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { LoginCard } from "@/components/admin/login-card"
+import { api } from "@/lib/api"
 
 export default function AdminLoginPage() {
   const router = useRouter()
@@ -13,16 +14,19 @@ export default function AdminLoginPage() {
     setIsLoading(true)
     setError("")
 
-    // Simulate API delay
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+    try {
+      // --- Appel API réel ---
+      const response = await api.auth.login(email, password)
 
-    // Fake credentials check
-    if (email === "admin@moviepark.com" && password === "admin123") {
-      // Store fake token in localStorage
-      localStorage.setItem("admin_token", "fake_jwt_token_12345")
+      // Sauvegarde des tokens
+      localStorage.setItem("admin_token", response.token)
+      localStorage.setItem("admin_refresh_token", response.refreshToken)
+      localStorage.setItem("admin_role", response.user.role)
+
+      // Redirection
       router.push("/admin/dashboard")
-    } else {
-      setError("Identifiants incorrects")
+    } catch (err: any) {
+      setError(err.message || "Erreur de connexion")
       setIsLoading(false)
     }
   }

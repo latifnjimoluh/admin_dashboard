@@ -4,94 +4,74 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { AdminLayout } from "@/components/admin/admin-layout"
 import { Search, Filter, ChevronRight } from "lucide-react"
+import { api } from "@/lib/api"
 
-interface Reservation {
+interface ReservationRow {
   id: string
   nom: string
   telephone: string
   pack: string
-  statut: "en_attente" | "partiel" | "payé" | "ticket_généré"
+  statut: string
   prixTotal: number
   totalPayé: number
   dateReservation: string
 }
 
-const mockReservations: Reservation[] = [
-  {
-    id: "1",
-    nom: "Jean Dupont",
-    telephone: "237 6 70 123 456",
-    pack: "Couple",
-    statut: "en_attente",
-    prixTotal: 50000,
-    totalPayé: 0,
-    dateReservation: "2024-11-28",
-  },
-  {
-    id: "2",
-    nom: "Marie Simo",
-    telephone: "237 6 75 789 012",
-    pack: "Famille",
-    statut: "partiel",
-    prixTotal: 120000,
-    totalPayé: 60000,
-    dateReservation: "2024-11-27",
-  },
-  {
-    id: "3",
-    nom: "Pierre Ndong",
-    telephone: "237 6 80 345 678",
-    pack: "VIP",
-    statut: "payé",
-    prixTotal: 80000,
-    totalPayé: 80000,
-    dateReservation: "2024-11-26",
-  },
-  {
-    id: "4",
-    nom: "Sophie Asso",
-    telephone: "237 6 85 901 234",
-    pack: "Simple",
-    statut: "ticket_généré",
-    prixTotal: 25000,
-    totalPayé: 25000,
-    dateReservation: "2024-11-25",
-  },
-  {
-    id: "5",
-    nom: "André Fouda",
-    telephone: "237 6 90 567 890",
-    pack: "Couple",
-    statut: "partiel",
-    prixTotal: 50000,
-    totalPayé: 30000,
-    dateReservation: "2024-11-24",
-  },
-]
-
 export default function ReservationsPage() {
   const router = useRouter()
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
+
   const [isLoading, setIsLoading] = useState(true)
+  const [reservations, setReservations] = useState<ReservationRow[]>([])
+  const [filteredReservations, setFilteredReservations] = useState<ReservationRow[]>([])
+
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("tous")
-  const [filteredReservations, setFilteredReservations] = useState<Reservation[]>([])
 
-  useEffect(() => {
-    const token = localStorage.getItem("admin_token")
-    if (!token) {
-      router.push("/admin/login")
-    } else {
-      setIsAuthenticated(true)
+  // =============================
+  //     1. FETCH RESERVATIONS
+  // =============================
+  const loadReservations = async () => {
+    try {
+      const res = await api.reservations.getAll()
+      const raw = res.reservations ?? []
+
+      // ---- Mapping backend → frontend ----
+      const mapped: ReservationRow[] = raw.map((r: any) => ({
+        id: r.id,
+        nom: r.payeur_name,
+        telephone: r.payeur_phone,
+        pack: r.pack?.name || "Pack inconnu",
+        statut: mapBackendStatus(r.status),
+        prixTotal: r.total_price,
+        totalPayé: r.payments?.reduce((sum: number, p: any) => sum + p.amount, 0) || 0,
+        dateReservation: new Date(r.createdAt).toLocaleDateString("fr-FR"),
+      }))
+
+      setReservations(mapped)
+      setFilteredReservations(mapped)
+    } catch (err) {
+      console.error("Erreur API réservations", err)
+    } finally {
       setIsLoading(false)
     }
-  }, [router])
+  }
 
   useEffect(() => {
-    let result = mockReservations
+    loadReservations()
+  }, [])
+
+  // =============================
+  //     2. FILTRAGE
+  // =============================
+  useEffect(() => {
+    let result = [...reservations]
 
     if (search) {
-      result = result.filter((r) => r.nom.toLowerCase().includes(search.toLowerCase()) || r.telephone.includes(search))
+      result = result.filter(
+        (r) =>
+          r.nom.toLowerCase().includes(search.toLowerCase()) ||
+          r.telephone.includes(search)
+      )
     }
 
     if (statusFilter !== "tous") {
@@ -99,11 +79,27 @@ export default function ReservationsPage() {
     }
 
     setFilteredReservations(result)
-  }, [search, statusFilter])
+  }, [search, statusFilter, reservations])
 
-  if (isLoading || !isAuthenticated) return null
+  // =============================
+  //     3. MAPPING STATUT
+  // =============================
+  const mapBackendStatus = (status: string) => {
+    switch (status) {
+      case "pending":
+        return "en_attente"
+      case "partial":
+        return "partiel"
+      case "paid":
+        return "payé"
+      case "ticket_generated":
+        return "ticket_généré"
+      default:
+        return "en_attente"
+    }
+  }
 
-  const getStatutBadge = (statut: Reservation["statut"]) => {
+  const getStatutBadge = (statut: string) => {
     const variants = {
       en_attente: "badge-en-attente",
       partiel: "badge-partiel",
@@ -119,7 +115,14 @@ export default function ReservationsPage() {
     return { className: variants[statut], label: labels[statut] }
   }
 
-  const montantRestant = (reservation: Reservation) => reservation.prixTotal - reservation.totalPayé
+  const montantRestant = (r: ReservationRow) => r.prixTotal - r.totalPayé
+
+  if (isLoading)
+    return (
+      <AdminLayout>
+        <div className="p-6 text-center text-muted-foreground">Chargement des réservations...</div>
+      </AdminLayout>
+    )
 
   return (
     <AdminLayout>
@@ -127,10 +130,12 @@ export default function ReservationsPage() {
         {/* Header */}
         <div>
           <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-2">Réservations</h1>
-          <p className="text-muted-foreground">Total: {filteredReservations.length} réservation(s)</p>
+          <p className="text-muted-foreground">
+            Total: {filteredReservations.length} réservation(s)
+          </p>
         </div>
 
-        {/* Search and Filter Bar */}
+        {/* Search + Filter */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* Search */}
           <div className="md:col-span-2 relative">
@@ -140,17 +145,17 @@ export default function ReservationsPage() {
               placeholder="Rechercher par nom ou téléphone..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-card border border-border rounded-md text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50 transition-colors text-sm md:text-base"
+              className="w-full pl-10 pr-4 py-2 bg-card border border-border rounded-md text-foreground placeholder-muted-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50 transition-colors"
             />
           </div>
 
-          {/* Status Filter */}
+          {/* Filter */}
           <div className="relative">
-            <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground pointer-events-none" />
+            <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-card border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50 transition-colors text-sm md:text-base appearance-none"
+              className="w-full pl-10 pr-4 py-2 bg-card border border-border rounded-md text-foreground focus:outline-none"
             >
               <option value="tous">Tous les statuts</option>
               <option value="en_attente">En attente</option>
@@ -167,62 +172,42 @@ export default function ReservationsPage() {
             <table className="w-full">
               <thead>
                 <tr>
-                  <th className="px-4 md:px-6 py-3 text-left text-sm font-semibold text-foreground whitespace-nowrap">
-                    Nom
-                  </th>
-                  <th className="px-4 md:px-6 py-3 text-left text-sm font-semibold text-foreground whitespace-nowrap">
-                    Téléphone
-                  </th>
-                  <th className="px-4 md:px-6 py-3 text-left text-sm font-semibold text-foreground whitespace-nowrap">
-                    Pack
-                  </th>
-                  <th className="px-4 md:px-6 py-3 text-left text-sm font-semibold text-foreground whitespace-nowrap">
-                    Statut
-                  </th>
-                  <th className="px-4 md:px-6 py-3 text-right text-sm font-semibold text-foreground whitespace-nowrap">
-                    Total
-                  </th>
-                  <th className="px-4 md:px-6 py-3 text-right text-sm font-semibold text-foreground whitespace-nowrap">
-                    Payé
-                  </th>
-                  <th className="px-4 md:px-6 py-3 text-right text-sm font-semibold text-foreground whitespace-nowrap">
-                    Restant
-                  </th>
-                  <th className="px-4 md:px-6 py-3 text-center text-sm font-semibold text-foreground whitespace-nowrap">
-                    Action
-                  </th>
+                  <th className="px-6 py-3 text-left text-sm font-semibold">Nom</th>
+                  <th className="px-6 py-3 text-left text-sm font-semibold">Téléphone</th>
+                  <th className="px-6 py-3 text-left text-sm font-semibold">Pack</th>
+                  <th className="px-6 py-3 text-left text-sm font-semibold">Statut</th>
+                  <th className="px-6 py-3 text-right text-sm font-semibold">Total</th>
+                  <th className="px-6 py-3 text-right text-sm font-semibold">Payé</th>
+                  <th className="px-6 py-3 text-right text-sm font-semibold">Restant</th>
+                  <th className="px-6 py-3 text-center text-sm font-semibold">Action</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredReservations.map((reservation) => {
-                  const badge = getStatutBadge(reservation.statut)
+                {filteredReservations.map((r) => {
+                  const badge = getStatutBadge(r.statut)
                   return (
-                    <tr key={reservation.id} className="hover:bg-secondary/50 transition-colors">
-                      <td className="px-4 md:px-6 py-3 text-sm text-foreground whitespace-nowrap">{reservation.nom}</td>
-                      <td className="px-4 md:px-6 py-3 text-sm text-muted-foreground whitespace-nowrap">
-                        {reservation.telephone}
-                      </td>
-                      <td className="px-4 md:px-6 py-3 text-sm text-foreground whitespace-nowrap">
-                        {reservation.pack}
-                      </td>
-                      <td className="px-4 md:px-6 py-3 text-sm whitespace-nowrap">
+                    <tr key={r.id} className="hover:bg-secondary/50 transition-colors">
+                      <td className="px-6 py-3 text-sm">{r.nom}</td>
+                      <td className="px-6 py-3 text-sm text-muted-foreground">{r.telephone}</td>
+                      <td className="px-6 py-3 text-sm">{r.pack}</td>
+                      <td className="px-6 py-3 text-sm">
                         <span className={`badge ${badge.className}`}>{badge.label}</span>
                       </td>
-                      <td className="px-4 md:px-6 py-3 text-sm text-right text-foreground whitespace-nowrap font-medium">
-                        {reservation.prixTotal.toLocaleString()} XAF
+                      <td className="px-6 py-3 text-right text-sm font-medium">
+                        {r.prixTotal.toLocaleString()} XAF
                       </td>
-                      <td className="px-4 md:px-6 py-3 text-sm text-right text-green-700 whitespace-nowrap font-medium">
-                        {reservation.totalPayé.toLocaleString()} XAF
+                      <td className="px-6 py-3 text-right text-sm text-green-600 font-medium">
+                        {r.totalPayé.toLocaleString()} XAF
                       </td>
-                      <td className="px-4 md:px-6 py-3 text-sm text-right text-orange-700 whitespace-nowrap font-medium">
-                        {montantRestant(reservation).toLocaleString()} XAF
+                      <td className="px-6 py-3 text-right text-sm text-orange-600 font-medium">
+                        {montantRestant(r).toLocaleString()} XAF
                       </td>
-                      <td className="px-4 md:px-6 py-3 text-center whitespace-nowrap">
+                      <td className="px-6 py-3 text-center">
                         <button
-                          onClick={() => router.push(`/admin/reservation/${reservation.id}`)}
+                          onClick={() => router.push(`/admin/reservation/${r.id}`)}
                           className="inline-flex items-center gap-2 px-3 py-2 bg-primary hover:bg-accent text-primary-foreground rounded-md transition-colors text-sm font-medium"
                         >
-                          <span className="hidden sm:inline">Ouvrir</span>
+                          Ouvrir
                           <ChevronRight className="w-4 h-4" />
                         </button>
                       </td>
@@ -231,14 +216,14 @@ export default function ReservationsPage() {
                 })}
               </tbody>
             </table>
-          </div>
 
-          {/* Empty State */}
-          {filteredReservations.length === 0 && (
-            <div className="p-8 text-center">
-              <p className="text-muted-foreground">Aucune réservation trouvée</p>
-            </div>
-          )}
+            {/* Empty state */}
+            {filteredReservations.length === 0 && (
+              <div className="p-8 text-center text-muted-foreground">
+                Aucune réservation trouvée
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </AdminLayout>
