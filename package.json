@@ -46,6 +46,7 @@
     "embla-carousel-react": "8.5.1",
     "html2canvas": "^1.4.1",
     "html2pdf.js": "^0.10.3",
+    "html5-qrcode": "^2.3.8",
     "input-otp": "1.4.1",
     "jspdf": "^2.5.1",
     "lucide-react": "^0.454.0",

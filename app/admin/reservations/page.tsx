@@ -50,6 +50,8 @@ export default function ReservationsPage() {
 
       setReservations(mapped)
       setFilteredReservations(mapped)
+
+
     } catch (err) {
       console.error("Erreur API réservations", err)
     } finally {
@@ -124,7 +126,22 @@ export default function ReservationsPage() {
         <div className="p-6 text-center text-muted-foreground">Chargement des réservations...</div>
       </AdminLayout>
     )
+      // =============================
+      //     CALCUL STATISTIQUES
+      // =============================
+      const totalReservations = filteredReservations.length;
 
+      const totalMontant = filteredReservations.reduce(
+        (sum, r) => sum + r.prixTotal,
+        0
+      );
+
+      const totalPayé = filteredReservations.reduce(
+        (sum, r) => sum + r.totalPayé,
+        0
+      );
+
+      const totalRestant = totalMontant - totalPayé;
   return (
     <AdminLayout>
       <div className="space-y-6">
@@ -134,6 +151,33 @@ export default function ReservationsPage() {
           <p className="text-muted-foreground">
             Total: {filteredReservations.length} réservation(s)
           </p>
+          {/* Statistiques globales */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+
+            {/* Total réservations */}
+            <div className="bg-card border rounded-lg p-6 text-center">
+              <p className="text-muted-foreground text-sm">Total des réservations</p>
+              <p className="text-3xl font-bold">{totalReservations}</p>
+            </div>
+
+            {/* Total payé */}
+            <div className="bg-card border rounded-lg p-6 text-center">
+              <p className="text-muted-foreground text-sm">Montant total payé</p>
+              <p className="text-3xl font-bold text-green-600">
+                {totalPayé.toLocaleString()} XAF
+              </p>
+            </div>
+
+            {/* Total restant */}
+            <div className="bg-card border rounded-lg p-6 text-center">
+              <p className="text-muted-foreground text-sm">Montant restant</p>
+              <p className="text-3xl font-bold text-orange-600">
+                {totalRestant.toLocaleString()} XAF
+              </p>
+            </div>
+
+          </div>
+
         </div>
 
         {/* Search + Filter */}

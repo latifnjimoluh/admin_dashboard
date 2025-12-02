@@ -5,99 +5,172 @@ import { useRouter } from "next/navigation"
 import { AdminLayout } from "@/components/admin/admin-layout"
 import { Plus, Trash2, CheckCircle, XCircle } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { api } from "@/lib/api"
 
 interface AdminUser {
   id: string
   nom: string
   email: string
-  role: "SuperAdmin" | "Comptabilité" | "Contrôle Entrée" | "Gestion Packs" | "Lecture seule"
+  role: string
   statut: "actif" | "inactif"
   derniere_connexion: string
 }
 
 export default function UsersPage() {
   const router = useRouter()
+
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
-  const [admins, setAdmins] = useState<AdminUser[]>([
-    {
-      id: "1",
-      nom: "Admin Principal",
-      email: "admin@moviepark.cm",
-      role: "SuperAdmin",
-      statut: "actif",
-      derniere_connexion: "2025-12-28 14:30",
-    },
-    {
-      id: "2",
-      nom: "nexus Comptable",
-      email: "nexus@moviepark.cm",
-      role: "Comptabilité",
-      statut: "actif",
-      derniere_connexion: "2025-12-28 09:15",
-    },
-  ])
-  const [showAddModal, setShowAddModal] = useState(false)
-  const [newAdmin, setNewAdmin] = useState({ nom: "", email: "", role: "Contrôle Entrée" as const })
 
+  const [admins, setAdmins] = useState<AdminUser[]>([])
+  const [errorMessage, setErrorMessage] = useState("")
+
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [showDeleteModal, setShowDeleteModal] = useState(false)   // <-- modal suppression
+  const [adminToDelete, setAdminToDelete] = useState<AdminUser | null>(null)
+
+  const [newAdmin, setNewAdmin] = useState({
+    nom: "",
+    email: "",
+    role: "scanner",
+  })
+
+  const roles = ["superadmin", "admin", "cashier", "scanner"]
+
+  // =========================
+  // AUTH + FETCH USERS
+  // =========================
   useEffect(() => {
     const token = localStorage.getItem("admin_token")
     if (!token) {
       router.push("/admin/login")
-    } else {
-      setIsAuthenticated(true)
-      setIsLoading(false)
+      return
     }
+
+    setIsAuthenticated(true)
+    loadAdmins()
   }, [router])
 
-  const handleAddAdmin = () => {
-    if (!newAdmin.nom || !newAdmin.email) return
+  const loadAdmins = async () => {
+    try {
+      const res = await api.users.list()
+      const users = res.data || []
 
-    const admin: AdminUser = {
-      id: Date.now().toString(),
-      nom: newAdmin.nom,
-      email: newAdmin.email,
-      role: newAdmin.role,
-      statut: "actif",
-      derniere_connexion: "-",
+      const mapped: AdminUser[] = users.map((u: any) => ({
+        id: u.id,
+        nom: u.name,
+        email: u.email,
+        role: u.role,
+        statut: "actif",
+        derniere_connexion: "-",
+      }))
+
+      setAdmins(mapped)
+    } catch (err) {
+      setErrorMessage("Impossible de charger les utilisateurs.")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // =========================
+  // CREATE ADMIN
+  // =========================
+  const generatePassword = () => Math.random().toString(36).slice(-8)
+
+  const handleAddAdmin = async () => {
+    setErrorMessage("")
+
+    if (!newAdmin.nom || !newAdmin.email) {
+      setErrorMessage("Veuillez remplir tous les champs.")
+      return
     }
 
-    setAdmins([...admins, admin])
-    setNewAdmin({ nom: "", email: "", role: "Contrôle Entrée" })
-    setShowAddModal(false)
+    try {
+      await api.users.create({
+        name: newAdmin.nom,
+        email: newAdmin.email,
+        phone: "",
+        role: newAdmin.role,
+        password: generatePassword(),
+      })
+
+      await loadAdmins()
+
+      setNewAdmin({ nom: "", email: "", role: "scanner" })
+      setShowAddModal(false)
+    } catch (err: any) {
+      const msg = err?.data?.message || "Erreur lors de la création."
+      setErrorMessage(msg)
+    }
   }
 
-  const handleDeleteAdmin = (id: string) => {
-    setAdmins(admins.filter((a) => a.id !== id))
+  // =========================
+  // OPEN DELETE MODAL
+  // =========================
+  const openDeleteModal = (admin: AdminUser) => {
+    setAdminToDelete(admin)
+    setShowDeleteModal(true)
   }
 
+  // =========================
+  // CONFIRM DELETE
+  // =========================
+  const confirmDelete = async () => {
+    if (!adminToDelete) return
+
+    try {
+      await api.users.delete(adminToDelete.id)
+      setAdmins(admins.filter((a) => a.id !== adminToDelete.id))
+    } catch (err: any) {
+      alert(err?.data?.message || "Erreur lors de la suppression")
+    }
+
+    setShowDeleteModal(false)
+    setAdminToDelete(null)
+  }
+
+  // =========================
+  // Toggle Status
+  // =========================
   const handleToggleStatus = (id: string) => {
-    setAdmins(admins.map((a) => (a.id === id ? { ...a, statut: a.statut === "actif" ? "inactif" : "actif" } : a)))
+    setAdmins(
+      admins.map((a) =>
+        a.id === id ? { ...a, statut: a.statut === "actif" ? "inactif" : "actif" } : a
+      )
+    )
   }
 
   if (isLoading || !isAuthenticated) return null
 
-  const roles = ["SuperAdmin", "Comptabilité", "Contrôle Entrée", "Gestion Packs", "Lecture seule"]
-
   return (
     <AdminLayout>
       <div className="space-y-6">
+
+        {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-foreground">Gestion des utilisateurs</h1>
+            <h1 className="text-3xl font-bold">Gestion des utilisateurs</h1>
             <p className="text-muted-foreground">Gérez les administrateurs et leurs droits d'accès</p>
           </div>
+
           <button
             onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-accent text-primary-foreground rounded-lg font-medium transition-colors"
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg"
           >
-            <Plus className="w-4 h-4" />
-            Ajouter un admin
+            <Plus className="w-4 h-4" /> Ajouter un admin
           </button>
         </div>
 
-        {/* Admins Table */}
-        <div className="bg-card border border-border rounded-lg overflow-hidden">
+        {/* Error message */}
+        {errorMessage && (
+          <div className="p-3 bg-red-100 text-red-700 rounded-md">
+            {errorMessage}
+          </div>
+        )}
+
+        {/* Table */}
+        <div className="bg-card border rounded-lg overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -110,16 +183,19 @@ export default function UsersPage() {
                   <th className="text-right">Actions</th>
                 </tr>
               </thead>
+
               <tbody>
                 {admins.map((admin) => (
-                  <tr key={admin.id}>
-                    <td className="font-medium text-foreground">{admin.nom}</td>
+                  <tr key={admin.id} className="border-t">
+                    <td>{admin.nom}</td>
                     <td className="text-muted-foreground">{admin.email}</td>
+
                     <td>
-                      <span className="px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-900">
+                      <span className="px-3 py-1 rounded-full bg-blue-100 text-blue-900 text-xs">
                         {admin.role}
                       </span>
                     </td>
+
                     <td>
                       <div className="flex items-center gap-2">
                         {admin.statut === "actif" ? (
@@ -127,88 +203,82 @@ export default function UsersPage() {
                         ) : (
                           <XCircle className="w-4 h-4 text-red-600" />
                         )}
-                        <span className="text-foreground">{admin.statut === "actif" ? "Actif" : "Inactif"}</span>
+                        {admin.statut === "actif" ? "Actif" : "Inactif"}
                       </div>
                     </td>
+
                     <td className="text-muted-foreground">{admin.derniere_connexion}</td>
-                    <td className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => handleToggleStatus(admin.id)}
-                          className="p-1 hover:bg-secondary rounded transition-colors"
-                        >
-                          {admin.statut === "actif" ? (
-                            <XCircle className="w-4 h-4 text-orange-600" />
-                          ) : (
-                            <CheckCircle className="w-4 h-4 text-green-600" />
-                          )}
-                        </button>
-                        <button
-                          onClick={() => handleDeleteAdmin(admin.id)}
-                          className="p-1 hover:bg-red-500/20 rounded transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4 text-red-600" />
-                        </button>
-                      </div>
+
+                    <td className="text-right flex justify-end gap-2">
+
+                      <button onClick={() => handleToggleStatus(admin.id)}>
+                        {admin.statut === "actif" ? (
+                          <XCircle className="w-4 h-4 text-orange-600" />
+                        ) : (
+                          <CheckCircle className="w-4 h-4 text-green-600" />
+                        )}
+                      </button>
+
+                      <button onClick={() => openDeleteModal(admin)}>
+                        <Trash2 className="w-4 h-4 text-red-600" />
+                      </button>
+
                     </td>
                   </tr>
                 ))}
               </tbody>
+
             </table>
           </div>
         </div>
       </div>
 
-      {/* Add Admin Modal */}
+      {/* ███████████████████████████████████████████████████ */}
+      {/*                 MODAL AJOUT USER                   */}
+      {/* ███████████████████████████████████████████████████ */}
       <Dialog open={showAddModal} onOpenChange={setShowAddModal}>
-        <DialogContent className="bg-card border border-border">
+        <DialogContent className="bg-card">
           <DialogHeader>
-            <DialogTitle className="text-foreground">Ajouter un administrateur</DialogTitle>
+            <DialogTitle>Créer un nouvel administrateur</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
+            {errorMessage && (
+              <div className="p-2 bg-red-100 text-red-700 rounded-md">
+                {errorMessage}
+              </div>
+            )}
+
             <div>
-              <label className="block text-sm font-medium text-foreground mb-2">Nom complet</label>
+              <label className="block mb-1">Nom complet</label>
               <input
                 type="text"
                 value={newAdmin.nom}
                 onChange={(e) => setNewAdmin({ ...newAdmin, nom: e.target.value })}
-                placeholder="nexus"
-                className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
+                className="w-full px-3 py-2 border rounded"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-foreground mb-2">Email</label>
+              <label className="block mb-1">Email</label>
               <input
                 type="email"
                 value={newAdmin.email}
                 onChange={(e) => setNewAdmin({ ...newAdmin, email: e.target.value })}
-                placeholder="nexus@moviepark.cm"
-                className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
+                className="w-full px-3 py-2 border rounded"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-foreground mb-2">Rôle</label>
+              <label className="block mb-1">Rôle</label>
               <select
                 value={newAdmin.role}
-                onChange={(e) =>
-                  setNewAdmin({
-                    ...newAdmin,
-                    role: e.target.value as
-                      | "SuperAdmin"
-                      | "Comptabilité"
-                      | "Contrôle Entrée"
-                      | "Gestion Packs"
-                      | "Lecture seule",
-                  })
-                }
-                className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
+                onChange={(e) => setNewAdmin({ ...newAdmin, role: e.target.value })}
+                className="w-full px-3 py-2 border rounded"
               >
-                {roles.map((role) => (
-                  <option key={role} value={role}>
-                    {role}
+                {roles.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
                   </option>
                 ))}
               </select>
@@ -216,21 +286,50 @@ export default function UsersPage() {
           </div>
 
           <DialogFooter>
-            <button
-              onClick={() => setShowAddModal(false)}
-              className="px-4 py-2 bg-secondary hover:bg-secondary/80 text-foreground rounded-md transition-colors font-medium text-sm"
-            >
+            <button onClick={() => setShowAddModal(false)} className="px-4 py-2 bg-secondary rounded">
               Annuler
             </button>
-            <button
-              onClick={handleAddAdmin}
-              className="px-4 py-2 bg-primary hover:bg-accent text-primary-foreground rounded-md transition-colors font-medium text-sm"
-            >
-              Créer l'admin
+            <button onClick={handleAddAdmin} className="px-4 py-2 bg-primary text-white rounded">
+              Créer
             </button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ███████████████████████████████████████████████████ */}
+      {/*          MODAL CONFIRMATION SUPPRESSION            */}
+      {/* ███████████████████████████████████████████████████ */}
+      <Dialog open={showDeleteModal} onOpenChange={setShowDeleteModal}>
+        <DialogContent className="bg-card border border-border">
+          <DialogHeader>
+            <DialogTitle className="text-red-600">Confirmation de suppression</DialogTitle>
+          </DialogHeader>
+
+          <p className="py-4">
+            Voulez-vous vraiment supprimer{" "}
+            <strong>{adminToDelete?.nom}</strong> ({adminToDelete?.email}) ?
+            <br />
+            Cette action est irréversible.
+          </p>
+
+          <DialogFooter>
+            <button
+              onClick={() => setShowDeleteModal(false)}
+              className="px-4 py-2 bg-secondary rounded"
+            >
+              Annuler
+            </button>
+
+            <button
+              onClick={confirmDelete}
+              className="px-4 py-2 bg-red-600 text-white rounded"
+            >
+              Supprimer définitivement
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </AdminLayout>
   )
 }

@@ -224,7 +224,7 @@ export default function CreateReservationPage() {
                     type="text"
                     value={payerName}
                     onChange={(e) => setPayerName(e.target.value)}
-                    placeholder="nexus"
+                    placeholder="nom complet"
                     className="w-full px-4 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
                   />
                 </div>
@@ -234,8 +234,11 @@ export default function CreateReservationPage() {
                   <input
                     type="tel"
                     value={payerPhone}
-                    onChange={(e) => setPayerPhone(e.target.value)}
-                    placeholder="237 6 70 123 456"
+                    onChange={(e) => setPayerPhone(e.target.value.replace(/\D/g, "").slice(0, 12))}
+                    placeholder="237672475691"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={12}
                     className="w-full px-4 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
                   />
                 </div>
@@ -246,7 +249,7 @@ export default function CreateReservationPage() {
                     type="email"
                     value={payerEmail}
                     onChange={(e) => setPayerEmail(e.target.value)}
-                    placeholder="nexus@example.com"
+                    placeholder="latifnjimoluh@gmail.com"
                     className="w-full px-4 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
                   />
                 </div>
@@ -340,7 +343,7 @@ export default function CreateReservationPage() {
                         type="text"
                         value={participant.name}
                         onChange={(e) => handleUpdateParticipant(index, { name: e.target.value })}
-                        placeholder="Nom complet"
+                        placeholder="nom complet"
                         disabled={index === 0}
                         className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50 disabled:opacity-50"
                       />
@@ -349,15 +352,18 @@ export default function CreateReservationPage() {
                         type="email"
                         value={participant.email || ""}
                         onChange={(e) => handleUpdateParticipant(index, { email: e.target.value })}
-                        placeholder="Email (optionnel)"
+                        placeholder="latifnjimoluh@gmail.com"
                         className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
                       />
 
                       <input
                         type="tel"
                         value={participant.phone || ""}
-                        onChange={(e) => handleUpdateParticipant(index, { phone: e.target.value })}
-                        placeholder="Téléphone (optionnel)"
+                        onChange={(e) => handleUpdateParticipant(index, { phone: e.target.value.replace(/\D/g, "").slice(0, 12) })}
+                        placeholder="237672475691"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        maxLength={12}
                         className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
                       />
                     </div>

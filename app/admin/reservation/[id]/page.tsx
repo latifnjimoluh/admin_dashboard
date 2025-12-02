@@ -20,7 +20,7 @@ interface Payment {
   amount: number
   method: string
   createdAt: string
-  creator?: { name: string }
+  creator?: { name?: string; role?: string }
 }
 
 interface ActionLog {
@@ -28,7 +28,7 @@ interface ActionLog {
   action_type: string
   createdAt: string
   meta: any
-  user?: { name: string }
+  user?: { name?: string; role?: string }
 }
 
 interface ReservationData {
@@ -68,7 +68,12 @@ export default function ReservationDetailsPage() {
 
   const [showAddPayment, setShowAddPayment] = useState(false)
   const [showTicketPreview, setShowTicketPreview] = useState(false)
-  const [newPayment, setNewPayment] = useState({ amount: "", method: "cash" })
+  const [newPayment, setNewPayment] = useState({
+  amount: "",
+  method: "cash",
+  file: null as File | null,
+})
+
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -172,6 +177,16 @@ export default function ReservationDetailsPage() {
     return a.action_type
   }
 
+  const formatUserLabel = (user?: { name?: string; role?: string } | null) => {
+    if (!user) return "Admin"
+    const name = user.name?.trim()
+    const role = user.role?.trim()
+    if (name && role) return `${name} (${role})`
+    if (name) return name
+    if (role) return role
+    return "Admin"
+  }
+
   const mapStatus = (status: string) => {
     const variants: any = {
       pending: { class: "badge-en-attente", label: "En attente" },
@@ -183,19 +198,30 @@ export default function ReservationDetailsPage() {
   }
 
   const handleAddPayment = async () => {
-    if (!newPayment.amount) return
+    const amountValue = Number(newPayment.amount);
+
+    if (!amountValue || isNaN(amountValue) || amountValue <= 0) {
+      console.error("Montant invalide");
+      return;
+    }
+
     try {
       await api.payments.add(reservation!.id, {
-        amount: Number(newPayment.amount),
+        amount: amountValue,
         method: newPayment.method,
-      })
-      await loadReservation()
-      setShowAddPayment(false)
-      setNewPayment({ amount: "", method: "cash" })
+        proof: newPayment.file || undefined,
+      });
+
+      await loadReservation();
+      setShowAddPayment(false);
+      setNewPayment({ amount: "", method: "cash", file: null });
     } catch (err) {
-      console.error("Erreur ajout paiement :", err)
+      console.error("Erreur ajout paiement :", err);
     }
-  }
+  };
+
+
+
 
   const handleViewTicket = () => {
     if (ticketData?.pdf_url) {
@@ -234,6 +260,7 @@ export default function ReservationDetailsPage() {
     }
   }
 
+  // --- Modifié : génération du bon avec logo optionnel ---
   const generateBonAvancement = () => {
     if (!reservation) return
 
@@ -242,129 +269,209 @@ export default function ReservationDetailsPage() {
     canvas.height = 800
     const ctx = canvas.getContext("2d")!
 
-    // Fond blanc
-    ctx.fillStyle = "#ffffff"
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    const logoSrc = "/logo.png" // place ton logo dans /public/logo.png
 
-    // Header avec logo
-    ctx.fillStyle = "#1a1a1a"
-    ctx.fillRect(0, 0, canvas.width, 120)
+    const drawAll = (logoImg?: HTMLImageElement) => {
+      // Fond blanc
+      ctx.fillStyle = "#ffffff"
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    ctx.fillStyle = "#ffffff"
-    ctx.font = "bold 28px Arial"
-    ctx.fillText("Movie in the Park", 30, 60)
+      // Header avec fond sombre
+      ctx.fillStyle = "#1a1a1a"
+      ctx.fillRect(0, 0, canvas.width, 120)
 
-    ctx.font = "16px Arial"
-    ctx.fillText("Bon d'avancement", 30, 90)
+      // Si logo fourni, l'afficher à gauche, sinon on laisse le texte centré
+      if (logoImg) {
+        const logoW = 100
+        const logoH = 80
+        const logoX = 30
+        const logoY = 18
+        try {
+          ctx.drawImage(logoImg, logoX, logoY, logoW, logoH)
+        } catch (e) {
+          // ignore si drawImage échoue
+        }
+        // Titre déplacé pour laisser la place au logo
+        ctx.fillStyle = "#ffffff"
+        ctx.font = "bold 24px Arial"
+        ctx.textAlign = "left"
+        ctx.fillText("Movie in the Park", 150, 52)
 
-    // Date d'émission
-    ctx.font = "14px Arial"
-    ctx.textAlign = "right"
-    ctx.fillText("Date d'émission", canvas.width - 30, 60)
-    ctx.font = "bold 16px Arial"
-    ctx.fillText(new Date().toLocaleDateString("fr-FR"), canvas.width - 30, 85)
+        ctx.font = "14px Arial"
+        ctx.fillText("Bon d'avancement", 150, 78)
+      } else {
+        // Pas de logo : titre centré
+        ctx.fillStyle = "#ffffff"
+        ctx.font = "bold 28px Arial"
+        ctx.textAlign = "left"
+        ctx.fillText("Movie in the Park", 30, 60)
 
-    // Section Informations du payeur
-    ctx.textAlign = "left"
-    ctx.fillStyle = "#333333"
-    ctx.font = "bold 18px Arial"
-    ctx.fillText("INFORMATIONS DU PAYEUR", 30, 180)
+        ctx.font = "16px Arial"
+        ctx.fillText("Bon d'avancement", 30, 90)
+      }
 
-    // Grille d'informations
-    ctx.font = "14px Arial"
-    ctx.fillStyle = "#666666"
-    ctx.fillText("Nom complet", 30, 220)
-    ctx.fillStyle = "#000000"
-    ctx.font = "bold 14px Arial"
-    ctx.fillText(reservation.payeur_name, 30, 240)
+      // Date d'émission
+      ctx.font = "14px Arial"
+      ctx.textAlign = "right"
+      ctx.fillStyle = "#ffffff"
+      ctx.fillText("Date d'émission", canvas.width - 30, 60)
+      ctx.font = "bold 16px Arial"
+      ctx.fillText(new Date().toLocaleDateString("fr-FR"), canvas.width - 30, 85)
 
-    ctx.font = "14px Arial"
-    ctx.fillStyle = "#666666"
-    ctx.fillText("Téléphone", 320, 220)
-    ctx.fillStyle = "#000000"
-    ctx.font = "bold 14px Arial"
-    ctx.fillText(reservation.payeur_phone, 320, 240)
+      // Section Informations du payeur
+      ctx.textAlign = "left"
+      ctx.fillStyle = "#333333"
+      ctx.font = "bold 18px Arial"
+      ctx.fillText("INFORMATIONS DU PAYEUR", 30, 180)
 
-    ctx.font = "14px Arial"
-    ctx.fillStyle = "#666666"
-    ctx.fillText("Email", 30, 280)
-    ctx.fillStyle = "#000000"
-    ctx.font = "bold 14px Arial"
-    ctx.fillText(reservation.payeur_email || "—", 30, 300)
+      // Grille d'informations
+      ctx.font = "14px Arial"
+      ctx.fillStyle = "#666666"
+      ctx.fillText("Nom complet", 30, 220)
+      ctx.fillStyle = "#000000"
+      ctx.font = "bold 14px Arial"
+      ctx.fillText(reservation.payeur_name, 30, 240)
 
-    ctx.font = "14px Arial"
-    ctx.fillStyle = "#666666"
-    ctx.fillText("Pack", 320, 280)
-    ctx.fillStyle = "#000000"
-    ctx.font = "bold 14px Arial"
-    ctx.fillText(reservation.pack_name, 320, 300)
+      ctx.font = "14px Arial"
+      ctx.fillStyle = "#666666"
+      ctx.fillText("Téléphone", 320, 220)
+      ctx.fillStyle = "#000000"
+      ctx.font = "bold 14px Arial"
+      ctx.fillText(reservation.payeur_phone, 320, 240)
 
-    // Encadré détails du paiement
-    ctx.strokeStyle = "#e0e0e0"
-    ctx.lineWidth = 2
-    ctx.strokeRect(30, 350, canvas.width - 60, 180)
+      ctx.font = "14px Arial"
+      ctx.fillStyle = "#666666"
+      ctx.fillText("Email", 30, 280)
+      ctx.fillStyle = "#000000"
+      ctx.font = "bold 14px Arial"
+      ctx.fillText(reservation.payeur_email || "—", 30, 300)
 
-    ctx.fillStyle = "#000000"
-    ctx.font = "bold 18px Arial"
-    ctx.fillText("Détails du paiement", 50, 390)
+      ctx.font = "14px Arial"
+      ctx.fillStyle = "#666666"
+      ctx.fillText("Pack", 320, 280)
+      ctx.fillStyle = "#000000"
+      ctx.font = "bold 14px Arial"
+      ctx.fillText(reservation.pack_name, 320, 300)
 
-    // Prix total
-    ctx.font = "14px Arial"
-    ctx.fillStyle = "#666666"
-    ctx.fillText("Prix total", 50, 430)
-    ctx.fillStyle = "#000000"
-    ctx.font = "bold 20px Arial"
-    ctx.textAlign = "right"
-    ctx.fillText(`${reservation.total_price.toLocaleString()} XAF`, canvas.width - 50, 430)
+      // Encadré détails du paiement
+      ctx.strokeStyle = "#e0e0e0"
+      ctx.lineWidth = 2
+      ctx.strokeRect(30, 350, canvas.width - 60, 180)
 
-    // Montant payé
-    ctx.textAlign = "left"
-    ctx.font = "14px Arial"
-    ctx.fillStyle = "#666666"
-    ctx.fillText("Montant payé", 50, 470)
-    ctx.fillStyle = "#16a34a"
-    ctx.font = "bold 20px Arial"
-    ctx.textAlign = "right"
-    ctx.fillText(`${reservation.total_paid.toLocaleString()} XAF`, canvas.width - 50, 470)
+      ctx.fillStyle = "#000000"
+      ctx.font = "bold 18px Arial"
+      ctx.fillText("Détails du paiement", 50, 390)
 
-    // Montant restant
-    ctx.textAlign = "left"
-    ctx.font = "bold 16px Arial"
-    ctx.fillStyle = "#000000"
-    ctx.fillText("Montant restant", 50, 510)
-    ctx.fillStyle = "#ea580c"
-    ctx.font = "bold 24px Arial"
-    ctx.textAlign = "right"
-    ctx.fillText(`${reservation.remaining_amount.toLocaleString()} XAF`, canvas.width - 50, 510)
+      // Prix total
+      ctx.font = "14px Arial"
+      ctx.fillStyle = "#666666"
+      ctx.fillText("Prix total", 50, 430)
+      ctx.fillStyle = "#000000"
+      ctx.font = "bold 20px Arial"
+      ctx.textAlign = "right"
+      ctx.fillText(`${reservation.total_price.toLocaleString()} XAF`, canvas.width - 50, 430)
 
-    // Footer
-    ctx.textAlign = "center"
-    ctx.font = "11px Arial"
-    ctx.fillStyle = "#999999"
-    ctx.fillText(
-      `Document généré automatiquement — Movie in the Park`,
-      canvas.width / 2,
-      720
-    )
-    ctx.fillText(
-      `Réservation #${reservation.id.substring(0, 8)}`,
-      canvas.width / 2,
-      740
-    )
+      // Montant payé
+      ctx.textAlign = "left"
+      ctx.font = "14px Arial"
+      ctx.fillStyle = "#666666"
+      ctx.fillText("Montant payé", 50, 470)
+      ctx.fillStyle = "#16a34a"
+      ctx.font = "bold 20px Arial"
+      ctx.textAlign = "right"
+      ctx.fillText(`${reservation.total_paid.toLocaleString()} XAF`, canvas.width - 50, 470)
 
-    // Télécharger
-    canvas.toBlob((blob) => {
-      if (!blob) return
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement("a")
-      link.href = url
-      link.download = `bon-avancement-${reservation.payeur_name.replace(/\s+/g, "-")}.png`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      URL.revokeObjectURL(url)
-    })
+      // Montant restant
+      ctx.textAlign = "left"
+      ctx.font = "bold 16px Arial"
+      ctx.fillStyle = "#000000"
+      ctx.fillText("Montant restant", 50, 510)
+      ctx.fillStyle = "#ea580c"
+      ctx.font = "bold 24px Arial"
+      ctx.textAlign = "right"
+      ctx.fillText(`${reservation.remaining_amount.toLocaleString()} XAF`, canvas.width - 50, 510)
+      // ==== DERNIERS PAIEMENTS ==== //
+      ctx.textAlign = "left"
+      ctx.fillStyle = "#333333"
+      ctx.font = "bold 18px Arial"
+      ctx.fillText("Derniers paiements", 30, 560)
+
+      let y = 590
+
+      // On récupère les 3 paiements les plus récents
+      const lastPayments = [...reservation.payments]
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 3)
+
+      if (lastPayments.length === 0) {
+        ctx.font = "14px Arial"
+        ctx.fillStyle = "#666"
+        ctx.fillText("Aucun paiement enregistré", 30, y)
+        y += 20
+      } else {
+        lastPayments.forEach((p) => {
+          const date = new Date(p.createdAt).toLocaleDateString("fr-FR")
+          const method =
+            p.method === "cash"
+              ? "Espèces"
+              : p.method === "momo"
+              ? "Mobile Money"
+              : p.method === "card"
+              ? "Carte bancaire"
+              : p.method
+
+          ctx.font = "14px Arial"
+          ctx.fillStyle = "#555"
+          ctx.fillText(`${date} — ${method}`, 30, y)
+
+          ctx.textAlign = "right"
+          ctx.fillStyle = "#000"
+          ctx.font = "bold 16px Arial"
+          ctx.fillText(`${p.amount.toLocaleString()} XAF`, canvas.width - 50, y)
+
+          ctx.textAlign = "left"
+          y += 24
+        })
+      }
+
+
+      // Footer
+      ctx.textAlign = "center"
+      ctx.font = "11px Arial"
+      ctx.fillStyle = "#999999"
+      ctx.fillText(`Document généré automatiquement — Movie in the Park`, canvas.width / 2, 720)
+      ctx.fillText(`Réservation #${reservation.id.substring(0, 8)}`, canvas.width / 2, 740)
+
+      // Télécharger
+      canvas.toBlob((blob) => {
+        if (!blob) return
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement("a")
+        link.href = url
+        link.download = `bon-avancement-${reservation.payeur_name.replace(/\s+/g, "-")}.png`
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        URL.revokeObjectURL(url)
+      })
+    }
+
+    // Tenter de charger le logo, si présent dans /public/logo.png
+    const img = new Image()
+    img.crossOrigin = "anonymous"
+    img.src = logoSrc
+
+    // Si le logo charge correctement : dessiner avec le logo
+    img.onload = () => {
+      drawAll(img)
+    }
+
+    // Si erreur de chargement (fichier absent, CORS...), dessiner sans logo
+    img.onerror = () => {
+      drawAll(undefined)
+    }
   }
+  // --- Fin modification ---
 
   const renderPaymentSummary = () => {
     if (!reservation) return null
@@ -449,7 +556,12 @@ export default function ReservationDetailsPage() {
     <AdminLayout>
       <div className="space-y-6">
         <div className="flex items-center gap-4">
-          <button onClick={() => router.back()} className="p-2 hover:bg-secondary rounded-md">
+          <button
+            onClick={() => router.back()}
+            className="p-2 hover:bg-secondary rounded-md"
+            aria-label="Retour"
+            title="Retour"
+          >
             <ArrowLeft className="w-5 h-5" />
           </button>
 
@@ -564,7 +676,7 @@ export default function ReservationDetailsPage() {
                           <td className="font-medium py-2">{p.amount.toLocaleString()} XAF</td>
                           <td className="py-2">{p.method}</td>
                           <td className="py-2">{new Date(p.createdAt).toLocaleDateString("fr-FR")}</td>
-                          <td className="py-2">{p.creator?.name || "Admin"}</td>
+                          <td className="py-2">{formatUserLabel(p.creator)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -590,7 +702,7 @@ export default function ReservationDetailsPage() {
                         </p>
                         {a.user && (
                           <p className="text-xs text-muted-foreground">
-                            Par : <span className="font-medium">{a.user.name}</span>
+                            Par : <span className="font-medium">{formatUserLabel(a.user)}</span>
                           </p>
                         )}
                       </div>
@@ -617,16 +729,20 @@ export default function ReservationDetailsPage() {
               <label className="text-sm">Montant (XAF)</label>
               <input
                 type="number"
+                min="1"
                 value={newPayment.amount}
-                onChange={(e) => setNewPayment({ ...newPayment, amount: e.target.value })}
+                onChange={(e) =>
+                  setNewPayment({ ...newPayment, amount: e.target.value.replace(/[^0-9]/g, "") })
+                }
                 className="w-full px-3 py-2 bg-input border rounded-md"
                 placeholder="0"
               />
             </div>
 
             <div>
-              <label className="text-sm">Méthode</label>
+              <label htmlFor="payment-method" className="text-sm">Méthode</label>
               <select
+                id="payment-method"
                 value={newPayment.method}
                 onChange={(e) => setNewPayment({ ...newPayment, method: e.target.value })}
                 className="w-full px-3 py-2 bg-input border rounded-md"
@@ -636,6 +752,22 @@ export default function ReservationDetailsPage() {
                 <option value="card">Carte bancaire</option>
               </select>
             </div>
+            <div>
+              <label className="text-sm">Justificatif (image ou PDF)</label>
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                onChange={(e) =>
+                  setNewPayment({
+                    ...newPayment,
+                    file: e.target.files ? e.target.files[0] : null,
+                  })
+                }
+                className="w-full px-3 py-2 bg-input border rounded-md"
+              />
+
+            </div>
+
           </div>
 
           <DialogFooter>

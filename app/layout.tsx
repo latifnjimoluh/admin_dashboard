@@ -11,7 +11,7 @@ const _geistMono = Geist_Mono({ subsets: ["latin"] })
 export const metadata: Metadata = {
   title: "Movie in the Park Admin",
   description: "Admin dashboard for Movie in the Park",
-  generator: "v0.app",
+  generator: "movie-in-the-park",
   icons: {
     icon: [
       {

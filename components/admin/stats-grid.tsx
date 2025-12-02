@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { StatCard } from "@/components/admin/stat-card"
 import { Users, CreditCard, AlertCircle, Ticket, Check } from "lucide-react"
+import { api } from "@/lib/api"
 
 const mockStats = [
   {
@@ -54,29 +55,86 @@ const mockStats = [
 ]
 
 export function StatsGrid() {
-  const [stats, setStats] = useState(
-    mockStats.map((s) => ({ ...s, displayValue: 0 }))
-  )
+  const [stats, setStats] = useState(mockStats.map((s) => ({ ...s, displayValue: 0 })))
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    const duration = 1400
-    const start = Date.now()
+    let mounted = true
 
-    const animate = () => {
-      const now = Date.now()
-      const progress = Math.min((now - start) / duration, 1)
+    const loadStats = async () => {
+      try {
+        setLoading(true)
+        setError(null)
 
-      setStats(
-        mockStats.map((stat) => ({
-          ...stat,
-          displayValue: Math.floor(stat.value * progress),
-        }))
-      )
+        // Fetch reservations, tickets and payments (use large pageSize to approximate totals)
+        const [resRes, resTickets, resPayments, resPacks] = await Promise.all([
+          api.reservations.getAll("?page=1&pageSize=1000"),
+          api.tickets.getAll(),
+          api.payments.getAll(),
+          api.packs.getAll("?is_active=true&page=1&pageSize=1000"),
+        ])
 
-      if (progress < 1) requestAnimationFrame(animate)
+        const reservationsRaw = resRes.data?.reservations || resRes.data || []
+        const ticketsRaw = resTickets.data?.tickets || resTickets.data || []
+        const paymentsRaw = resPayments.data?.payments || resPayments.data || []
+        const packsRaw = resPacks.data?.packs || resPacks.data || []
+
+        const totalReservations = Array.isArray(reservationsRaw) ? reservationsRaw.length : 0
+        const totalTickets = Array.isArray(ticketsRaw) ? ticketsRaw.length : 0
+        const totalPacks = Array.isArray(packsRaw) ? packsRaw.length : 0
+
+        const totalPaid = Array.isArray(reservationsRaw)
+          ? reservationsRaw.reduce((acc: number, r: any) => acc + (r.total_paid || 0), 0)
+          : 0
+
+        const partialPayments = Array.isArray(reservationsRaw)
+          ? reservationsRaw.filter((r: any) => (r.total_paid || 0) < (r.total_price || 0)).length
+          : 0
+
+        // Build updated stats based on mockStats order
+        const updatedStats = [
+          { ...mockStats[0], value: totalReservations },
+          { ...mockStats[1], value: totalPaid },
+          { ...mockStats[2], value: partialPayments },
+          { ...mockStats[3], value: totalTickets },
+          { ...mockStats[4], value: 0 }, // Entrées validées not available from summary
+        ]
+
+        if (!mounted) return
+
+        // Animate from 0 -> value similar to previous implementation
+        const duration = 800
+        const start = Date.now()
+
+        const animate = () => {
+          const now = Date.now()
+          const progress = Math.min((now - start) / duration, 1)
+
+          setStats(
+            updatedStats.map((stat) => ({
+              ...stat,
+              displayValue: Math.floor((stat.value as number) * progress),
+            }))
+          )
+
+          if (progress < 1) requestAnimationFrame(animate)
+        }
+
+        requestAnimationFrame(animate)
+      } catch (err: any) {
+        console.error("Failed to load stats:", err)
+        if (mounted) setError("Impossible de charger les statistiques")
+      } finally {
+        if (mounted) setLoading(false)
+      }
     }
 
-    requestAnimationFrame(animate)
+    loadStats()
+
+    return () => {
+      mounted = false
+    }
   }, [])
 
   return (

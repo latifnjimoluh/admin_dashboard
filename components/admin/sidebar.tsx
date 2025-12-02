@@ -1,6 +1,7 @@
 "use client"
 
   import Link from "next/link"
+  import Image from "next/image"
   import { usePathname } from "next/navigation"
   import {
     LayoutDashboard,
@@ -60,17 +61,13 @@
           </div>
 
           {/* Logo */}
-          {/* <div className="p-6 border-b border-sidebar-border flex items-center gap-2"> */}
           <div className="h-20 px-6 border-b border-sidebar-border flex items-center gap-2">
-
-            <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
-              <span className="text-white font-bold text-sm">🎬</span>
-            </div>
-            {isOpen && (
-              <h2 className="text-sm font-bold text-sidebar-foreground">
-                Movie in the Park
-              </h2>
-            )}
+            <Link href="/admin/dashboard" className="flex items-center gap-2">
+              <Image src="/logo.png" alt="Logo" width={40} height={40} className="object-contain" />
+              {isOpen && (
+                <h2 className="text-sm font-bold text-sidebar-foreground">Movie in the Park</h2>
+              )}
+            </Link>
           </div>
 
           {/* Menu */}

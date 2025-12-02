@@ -18,10 +18,22 @@ export default function AdminLoginPage() {
       // --- Appel API réel ---
       const response = await api.auth.login(email, password)
 
+      // L'API client retourne un objet { status, message, data }
+      // `data` contient normalement { token, refreshToken, user }
+      const payload = response?.data ?? response
+
+      if (!payload || (!payload.token && !payload.data?.token)) {
+        throw new Error(response?.message || "Réponse inattendue du serveur")
+      }
+
+      const token = payload.token ?? payload.data?.token
+      const refreshToken = payload.refreshToken ?? payload.data?.refreshToken
+      const user = payload.user ?? payload.data?.user
+
       // Sauvegarde des tokens
-      localStorage.setItem("admin_token", response.token)
-      localStorage.setItem("admin_refresh_token", response.refreshToken)
-      localStorage.setItem("admin_role", response.user.role)
+      if (token) localStorage.setItem("admin_token", token)
+      if (refreshToken) localStorage.setItem("admin_refresh_token", refreshToken)
+      if (user?.role) localStorage.setItem("admin_role", user.role)
 
       // Redirection
       router.push("/admin/dashboard")
