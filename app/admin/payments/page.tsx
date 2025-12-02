@@ -4,80 +4,18 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { AdminLayout } from "@/components/admin/admin-layout"
 import { Search, Filter, ChevronRight } from "lucide-react"
+import { api } from "@/lib/api"
 
 interface Payment {
   id: string
   nomPayeur: string
   telephone: string
   montant: number
-  mode: "MoMo" | "Cash"
+  mode: string
   date: string
   admin: string
   reservationId: string
 }
-
-const mockPayments: Payment[] = [
-  {
-    id: "p1",
-    nomPayeur: "Jean Dupont",
-    telephone: "237 6 70 123 456",
-    montant: 25000,
-    mode: "MoMo",
-    date: "2024-11-27",
-    admin: "Admin Asso",
-    reservationId: "1",
-  },
-  {
-    id: "p2",
-    nomPayeur: "Marie Simo",
-    telephone: "237 6 75 789 012",
-    montant: 60000,
-    mode: "Cash",
-    date: "2024-11-26",
-    admin: "Admin Jean",
-    reservationId: "2",
-  },
-  {
-    id: "p3",
-    nomPayeur: "Pierre Ndong",
-    telephone: "237 6 80 345 678",
-    montant: 80000,
-    mode: "MoMo",
-    date: "2024-11-25",
-    admin: "Admin Asso",
-    reservationId: "3",
-  },
-  {
-    id: "p4",
-    nomPayeur: "Sophie Asso",
-    telephone: "237 6 85 901 234",
-    montant: 25000,
-    mode: "Cash",
-    date: "2024-11-24",
-    admin: "Admin Jean",
-    reservationId: "4",
-  },
-  {
-    id: "p5",
-    nomPayeur: "André Fouda",
-    telephone: "237 6 90 567 890",
-    montant: 30000,
-    mode: "MoMo",
-    date: "2024-11-23",
-    admin: "Admin Asso",
-    reservationId: "5",
-  },
-  {
-    id: "p6",
-    nomPayeur: "Jean Dupont",
-    telephone: "237 6 70 123 456",
-    montant: 25000,
-    mode: "MoMo",
-    date: "2024-11-22",
-    admin: "Admin Jean",
-    reservationId: "1",
-  },
-]
 
 export default function PaymentsPage() {
   const router = useRouter()
@@ -85,6 +23,7 @@ export default function PaymentsPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [search, setSearch] = useState("")
   const [modeFilter, setModeFilter] = useState<string>("tous")
+  const [payments, setPayments] = useState<Payment[]>([])
   const [filteredPayments, setFilteredPayments] = useState<Payment[]>([])
 
   useEffect(() => {
@@ -93,16 +32,45 @@ export default function PaymentsPage() {
       router.push("/admin/login")
     } else {
       setIsAuthenticated(true)
-      setIsLoading(false)
+      loadPayments()
     }
   }, [router])
 
+  const loadPayments = async () => {
+    try {
+      setIsLoading(true)
+      const response = await api.payments.getAll()
+      
+      if (response.status === 200) {
+        const raw = response.data?.payments || response.data || []
+        
+        const mapped: Payment[] = raw.map((p: any) => ({
+          id: p.id,
+          nomPayeur: p.reservation?.payeur_name || "—",
+          telephone: p.reservation?.payeur_phone || "—",
+          montant: p.amount,
+          mode: p.method === "cash" ? "Cash" : p.method === "momo" ? "MoMo" : p.method,
+          date: new Date(p.createdAt).toLocaleDateString("fr-FR"),
+          admin: p.creator?.name || "Admin",
+          reservationId: p.reservation_id || p.reservation?.id,
+        }))
+        
+        setPayments(mapped)
+        setFilteredPayments(mapped)
+      }
+    } catch (err) {
+      console.error("Erreur chargement paiements:", err)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   useEffect(() => {
-    let result = mockPayments
+    let result = [...payments]
 
     if (search) {
       result = result.filter(
-        (p) => p.nomPayeur.toLowerCase().includes(search.toLowerCase()) || p.telephone.includes(search),
+        (p) => p.nomPayeur.toLowerCase().includes(search.toLowerCase()) || p.telephone.includes(search)
       )
     }
 
@@ -111,9 +79,17 @@ export default function PaymentsPage() {
     }
 
     setFilteredPayments(result)
-  }, [search, modeFilter])
+  }, [search, modeFilter, payments])
 
-  if (isLoading || !isAuthenticated) return null
+  if (isLoading || !isAuthenticated) {
+    return (
+      <AdminLayout>
+        <div className="flex items-center justify-center py-12">
+          <p className="text-muted-foreground">Chargement...</p>
+        </div>
+      </AdminLayout>
+    )
+  }
 
   const totalMontant = filteredPayments.reduce((sum, p) => sum + p.montant, 0)
 
@@ -130,7 +106,6 @@ export default function PaymentsPage() {
 
         {/* Search and Filter Bar */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Search */}
           <div className="md:col-span-2 relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
             <input
@@ -142,7 +117,6 @@ export default function PaymentsPage() {
             />
           </div>
 
-          {/* Mode Filter */}
           <div className="relative">
             <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground pointer-events-none" />
             <select
@@ -153,10 +127,12 @@ export default function PaymentsPage() {
               <option value="tous">Tous les modes</option>
               <option value="MoMo">Mobile Money (MoMo)</option>
               <option value="Cash">Espèces (Cash)</option>
+              <option value="card">Carte bancaire</option>
             </select>
           </div>
         </div>
 
+        {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-card border border-border rounded-lg p-6">
             <p className="text-muted-foreground text-sm mb-2">Nombre de paiements</p>
@@ -169,8 +145,7 @@ export default function PaymentsPage() {
           <div className="bg-card border border-border rounded-lg p-6">
             <p className="text-muted-foreground text-sm mb-2">Montant moyen</p>
             <p className="text-3xl font-bold text-blue-700">
-              {filteredPayments.length > 0 ? Math.round(totalMontant / filteredPayments.length).toLocaleString() : 0}{" "}
-              XAF
+              {filteredPayments.length > 0 ? Math.round(totalMontant / filteredPayments.length).toLocaleString() : 0} XAF
             </p>
           </div>
         </div>
@@ -180,7 +155,7 @@ export default function PaymentsPage() {
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr>
+                <tr className="bg-secondary/50">
                   <th className="px-4 md:px-6 py-3 text-left text-sm font-semibold text-foreground whitespace-nowrap">
                     Nom du payeur
                   </th>
@@ -206,8 +181,10 @@ export default function PaymentsPage() {
               </thead>
               <tbody>
                 {filteredPayments.map((payment) => (
-                  <tr key={payment.id} className="hover:bg-secondary/50 transition-colors">
-                    <td className="px-4 md:px-6 py-3 text-sm text-foreground whitespace-nowrap">{payment.nomPayeur}</td>
+                  <tr key={payment.id} className="hover:bg-secondary/50 transition-colors border-t border-border">
+                    <td className="px-4 md:px-6 py-3 text-sm text-foreground whitespace-nowrap font-medium">
+                      {payment.nomPayeur}
+                    </td>
                     <td className="px-4 md:px-6 py-3 text-sm text-muted-foreground whitespace-nowrap">
                       {payment.telephone}
                     </td>
@@ -223,12 +200,8 @@ export default function PaymentsPage() {
                         {payment.mode}
                       </span>
                     </td>
-                    <td className="px-4 md:px-6 py-3 text-sm text-muted-foreground whitespace-nowrap">
-                      {payment.date}
-                    </td>
-                    <td className="px-4 md:px-6 py-3 text-sm text-muted-foreground whitespace-nowrap">
-                      {payment.admin}
-                    </td>
+                    <td className="px-4 md:px-6 py-3 text-sm text-muted-foreground whitespace-nowrap">{payment.date}</td>
+                    <td className="px-4 md:px-6 py-3 text-sm text-muted-foreground whitespace-nowrap">{payment.admin}</td>
                     <td className="px-4 md:px-6 py-3 text-center whitespace-nowrap">
                       <button
                         onClick={() => router.push(`/admin/reservation/${payment.reservationId}`)}
@@ -244,7 +217,6 @@ export default function PaymentsPage() {
             </table>
           </div>
 
-          {/* Empty State */}
           {filteredPayments.length === 0 && (
             <div className="p-8 text-center">
               <p className="text-muted-foreground">Aucun paiement trouvé</p>

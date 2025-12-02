@@ -30,8 +30,8 @@ export default function UsersPage() {
     },
     {
       id: "2",
-      nom: "Jean Comptable",
-      email: "jean@moviepark.cm",
+      nom: "nexus Comptable",
+      email: "nexus@moviepark.cm",
       role: "Comptabilité",
       statut: "actif",
       derniere_connexion: "2025-12-28 09:15",
@@ -173,7 +173,7 @@ export default function UsersPage() {
                 type="text"
                 value={newAdmin.nom}
                 onChange={(e) => setNewAdmin({ ...newAdmin, nom: e.target.value })}
-                placeholder="Jean Dupont"
+                placeholder="nexus"
                 className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
               />
             </div>
@@ -184,7 +184,7 @@ export default function UsersPage() {
                 type="email"
                 value={newAdmin.email}
                 onChange={(e) => setNewAdmin({ ...newAdmin, email: e.target.value })}
-                placeholder="jean@moviepark.cm"
+                placeholder="nexus@moviepark.cm"
                 className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
               />
             </div>

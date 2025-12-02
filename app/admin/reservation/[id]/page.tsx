@@ -3,24 +3,11 @@
 import { useEffect, useState } from "react"
 import { useRouter, useParams } from "next/navigation"
 import { AdminLayout } from "@/components/admin/admin-layout"
-import { ArrowLeft, Plus, Download, Printer } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
-import { VisuallyHidden } from "@radix-ui/react-visually-hidden"
-
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog"
-
+import { ArrowLeft, Plus, Download, Eye, FileText, Trash2 } from "lucide-react"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
 
-// --------------------------------------------------------------
-// 🧩 INTERFACES 100 % ALIGNÉES BACKEND
-// --------------------------------------------------------------
 interface Participant {
   id: string
   name: string
@@ -41,6 +28,7 @@ interface ActionLog {
   action_type: string
   createdAt: string
   meta: any
+  user?: { name: string }
 }
 
 interface ReservationData {
@@ -49,18 +37,23 @@ interface ReservationData {
   payeur_phone: string
   payeur_email: string
   pack_name: string
+  quantity: number
   total_price: number
   total_paid: number
   remaining_amount: number
   status: string
   createdAt: string
-
   participants: Participant[]
   payments: Payment[]
   actions: ActionLog[]
 }
 
-// --------------------------------------------------------------
+interface TicketData {
+  ticket_number: string
+  qr_data_url: string
+  pdf_url: string
+  generated_at: string
+}
 
 export default function ReservationDetailsPage() {
   const router = useRouter()
@@ -70,40 +63,15 @@ export default function ReservationDetailsPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [loadingData, setLoadingData] = useState(true)
   const [reservation, setReservation] = useState<ReservationData | null>(null)
+  const [ticketData, setTicketData] = useState<TicketData | null>(null)
+  const [loadingTicket, setLoadingTicket] = useState(false)
 
   const [showAddPayment, setShowAddPayment] = useState(false)
-  const [showQRCode, setShowQRCode] = useState(false)
-  const [ticketDataUrl, setTicketDataUrl] = useState<string | null>(null)
-  const [ticketCode, setTicketCode] = useState<string | null>(null)
-  const [ticketGenerating, setTicketGenerating] = useState(false)
-  const [ticketPdfUrl, setTicketPdfUrl] = useState<string | null>(null)
-  const [showAdvancementPDF, setShowAdvancementPDF] = useState(false)
-
+  const [showTicketPreview, setShowTicketPreview] = useState(false)
   const [newPayment, setNewPayment] = useState({ amount: "", method: "cash" })
-  
-  const mapActionDescription = (a: ActionLog) => {
-    if (a.meta?.description) return a.meta.description
 
-    if (a.action_type === "payment.add") {
-      return `Paiement ajouté : +${a.meta.amount} XAF (${a.meta.method})`
-    }
-    if (a.action_type === "payment.delete") {
-      return `Paiement supprimé : -${a.meta.amount} XAF`
-    }
-    if (a.action_type === "reservation.update") {
-      return `Modification des informations du payeur`
-    }
-    if (a.action_type === "pack.change") {
-      return `Changement de pack : ${a.meta.old} → ${a.meta.new}`
-    }
-
-    return a.action_type
-  }
-
-  // --------------------------------------------------------------
-  // 🔐 AUTH CHECK
-  // --------------------------------------------------------------
   useEffect(() => {
+    if (typeof window === "undefined") return
     if (!localStorage.getItem("admin_token")) {
       router.push("/admin/login")
     } else {
@@ -111,41 +79,36 @@ export default function ReservationDetailsPage() {
     }
   }, [router])
 
-  // --------------------------------------------------------------
-  // 📌 LOAD RESERVATION
-  // --------------------------------------------------------------
   const loadReservation = async () => {
     setLoadingData(true)
     try {
       const res = await api.reservations.getOne(reservationId)
 
-      if (!res?.reservation) {
+      if (!res?.data?.reservation) {
         console.error("Réservation introuvable :", res)
         return
       }
 
-      const r = res.reservation
+      const r = res.data.reservation
 
       const mapped: ReservationData = {
         id: r.id,
         payeur_name: r.payeur_name,
         payeur_phone: r.payeur_phone,
         payeur_email: r.payeur_email,
-
         pack_name: r.pack_name_snapshot || r.pack?.name,
+        quantity: r.quantity || 1,
         total_price: r.total_price,
         total_paid: r.total_paid,
         remaining_amount: r.remaining_amount,
         status: r.status,
         createdAt: r.createdAt,
-
         participants: r.participants.map((p: any) => ({
           id: p.id,
           name: p.name,
           phone: p.phone,
           email: p.email,
         })),
-
         payments: (r.payments || []).map((p: any) => ({
           id: p.id,
           amount: p.amount,
@@ -153,24 +116,62 @@ export default function ReservationDetailsPage() {
           createdAt: p.createdAt,
           creator: p.creator,
         })),
-
-        actions: r.actions,
+        actions: (r.actions || []).map((a: any) => ({
+          id: a.id,
+          action_type: a.action_type,
+          createdAt: a.createdAt,
+          meta: a.meta,
+          user: a.user,
+        })),
       }
 
       setReservation(mapped)
+
+      if (mapped.status === "ticket_generated") {
+        await loadTicket()
+      }
     } catch (err) {
       console.error("Erreur récupération réservation:", err)
     }
     setLoadingData(false)
   }
 
+  const loadTicket = async () => {
+    setLoadingTicket(true)
+    try {
+      const res = await api.tickets.getByReservation(reservationId)
+      if (res.status === 200 && res.data) {
+        const ticket = res.data.ticket || res.data
+        setTicketData(ticket)
+      }
+    } catch (err: any) {
+      if (err.status !== 404) {
+        console.error("Error loading ticket:", err)
+      }
+    } finally {
+      setLoadingTicket(false)
+    }
+  }
+
   useEffect(() => {
     if (isAuthenticated) loadReservation()
   }, [isAuthenticated])
 
-  // --------------------------------------------------------------
-  // 🎨 BADGE STATUT
-  // --------------------------------------------------------------
+  const mapActionDescription = (a: ActionLog) => {
+    if (a.meta?.description) return a.meta.description
+    if (a.action_type === "payment.add") {
+      const method = a.meta.method === "cash" ? "espèces" : a.meta.method === "momo" ? "Mobile Money" : a.meta.method
+      return `Un paiement de ${a.meta.amount} XAF a été enregistré (${method})`
+    }
+    if (a.action_type === "payment.delete") {
+      return `Un paiement de ${a.meta.amount} XAF a été annulé`
+    }
+    if (a.action_type === "ticket.generate") {
+      return `Le ticket ${a.meta.ticket_number || "N/A"} a été généré avec succès`
+    }
+    return a.action_type
+  }
+
   const mapStatus = (status: string) => {
     const variants: any = {
       pending: { class: "badge-en-attente", label: "En attente" },
@@ -181,24 +182,13 @@ export default function ReservationDetailsPage() {
     return variants[status] || { class: "badge-en-attente", label: status }
   }
 
-  if (!isAuthenticated || !reservation) return null
-
-  const badge = mapStatus(reservation.status)
-  const totalPayé = reservation.total_paid
-  const montantRestant = reservation.remaining_amount
-
-  // --------------------------------------------------------------
-  // 💵 AJOUTER UN PAIEMENT
-  // --------------------------------------------------------------
   const handleAddPayment = async () => {
     if (!newPayment.amount) return
-
     try {
-      await api.payments.add(reservation.id, {
+      await api.payments.add(reservation!.id, {
         amount: Number(newPayment.amount),
         method: newPayment.method,
       })
-
       await loadReservation()
       setShowAddPayment(false)
       setNewPayment({ amount: "", method: "cash" })
@@ -207,170 +197,257 @@ export default function ReservationDetailsPage() {
     }
   }
 
-  // -----------------------------
-  // Génération d'un ticket image
-  // -----------------------------
-  const chooseImageForPack = (packName?: string) => {
-    if (!packName) return "/simple.jpg"
-    const name = packName.toLowerCase()
-    if (name.includes("vip")) return "/vip.jpg"
-    if (name.includes("famille") || name.includes("family")) return "/famille.jpg"
-    if (name.includes("couple")) return "/couple.jpg"
-    return "/simple.jpg"
+  const handleViewTicket = () => {
+    if (ticketData?.pdf_url) {
+      setShowTicketPreview(true)
+    }
+  }
+
+  const handleDownloadTicket = () => {
+    if (ticketData?.pdf_url) {
+      const link = document.createElement("a")
+      link.href = ticketData.pdf_url
+      link.download = `ticket-${ticketData.ticket_number}.pdf`
+      link.target = "_blank"
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    }
   }
 
   const handleGenerateTicket = async () => {
-    if (!reservation) return
-    setTicketGenerating(true)
+    setLoadingTicket(true)
     try {
-      // Call backend to generate ticket (includes QR image and PDF)
-      const resp: any = await api.tickets.generate(reservation.id)
-      const ticket = resp.ticket || resp
-
-      const ticketNumber = ticket.ticket_number || ticket.ticketNumber || null
-      const qrImagePath = ticket.qr_image_url || ticket.qrImageUrl || null
-      const pdfUrl = ticket.pdf_url || ticket.pdfUrl || null
-
-      setTicketCode(ticketNumber)
-      if (pdfUrl) setTicketPdfUrl(pdfUrl.startsWith("http") ? pdfUrl : `http://localhost:3001${pdfUrl}`)
-
-      // Build full QR URL if needed
-      let qrSrc = null
-      if (qrImagePath) {
-        qrSrc = qrImagePath.startsWith("http") ? qrImagePath : `http://localhost:3001${qrImagePath}`
+      const res = await api.tickets.generate(reservationId)
+      if (res.status === 201 || res.status === 200) {
+        const ticket = res.data.ticket || res.data
+        setTicketData(ticket)
+        await loadReservation()
       }
-
-      // Load template and qr image
-      const templateSrc = chooseImageForPack(reservation.pack_name)
-      const imgTemplate = new Image()
-      imgTemplate.crossOrigin = "anonymous"
-      imgTemplate.src = templateSrc
-
-      const imgQr = new Image()
-      imgQr.crossOrigin = "anonymous"
-      if (qrSrc) imgQr.src = qrSrc
-
-      await Promise.all([
-        new Promise<void>((res, rej) => { imgTemplate.onload = () => res(); imgTemplate.onerror = rej }),
-        new Promise<void>((res, rej) => { if (!qrSrc) return res(); imgQr.onload = () => res(); imgQr.onerror = rej }),
-      ])
-
-      const canvas = document.createElement("canvas")
-      const ctx = canvas.getContext("2d")
-      if (!ctx) throw new Error("Impossible d'obtenir le contexte canvas")
-
-      const width = imgTemplate.naturalWidth || imgTemplate.width || 1200
-      const height = imgTemplate.naturalHeight || imgTemplate.height || 400
-      canvas.width = width
-      canvas.height = height
-
-      // Draw template
-      ctx.drawImage(imgTemplate, 0, 0, width, height)
-
-      // Draw QR on right side (adjust size)
-      if (qrSrc) {
-        const qrSize = Math.floor(Math.min(width, height) * 0.22)
-        const qrX = width - qrSize - Math.floor(width * 0.04)
-        const qrY = Math.floor(height * 0.06)
-        ctx.fillStyle = "rgba(255,255,255,0.0)"
-        ctx.drawImage(imgQr, qrX, qrY, qrSize, qrSize)
+    } catch (err: any) {
+      console.error("Ticket generation error:", err)
+      if (err.status === 409) {
+        await loadTicket()
       }
-
-      // Draw code (ticket number) in bottom-right rounded box
-      const boxWidth = Math.floor(width * 0.36)
-      const boxHeight = Math.floor(height * 0.18)
-      const boxX = width - boxWidth - Math.floor(width * 0.04)
-      const boxY = height - boxHeight - Math.floor(height * 0.06)
-
-      ctx.fillStyle = "rgba(0,0,0,0.55)"
-      const drawRoundedRect = (x: number, y: number, w: number, h: number, r: number) => {
-        ctx.beginPath()
-        ctx.moveTo(x + r, y)
-        ctx.arcTo(x + w, y, x + w, y + h, r)
-        ctx.arcTo(x + w, y + h, x, y + h, r)
-        ctx.arcTo(x, y + h, x, y, r)
-        ctx.arcTo(x, y, x + w, y, r)
-        ctx.closePath()
-        ctx.fill()
-      }
-      drawRoundedRect(boxX, boxY, boxWidth, boxHeight, Math.floor(boxHeight * 0.15))
-
-      ctx.fillStyle = "#ffffff"
-      const fontSize = Math.floor(boxHeight * 0.35)
-      ctx.font = `bold ${fontSize}px sans-serif`
-      ctx.textAlign = "center"
-      ctx.textBaseline = "middle"
-      ctx.fillText(ticketNumber || "", boxX + boxWidth / 2, boxY + boxHeight / 2 - (fontSize * 0.08))
-
-      ctx.font = `${Math.floor(boxHeight * 0.18)}px sans-serif`
-      ctx.fillText(`#${reservation.id.slice(0, 8)}`, boxX + boxWidth / 2, boxY + boxHeight / 2 + (fontSize * 0.6))
-
-      const dataUrl = canvas.toDataURL("image/png")
-      setTicketDataUrl(dataUrl)
-      setShowQRCode(true)
-
-      // Refresh reservation status
-      await loadReservation()
-    } catch (err) {
-      console.error("Erreur génération ticket:", err)
     } finally {
-      setTicketGenerating(false)
+      setLoadingTicket(false)
     }
   }
 
-  // --------------------------------------------------------------
-  // 📄 GÉNÉRER PDF À PARTIR DU SCREENSHOT
-  // --------------------------------------------------------------
-  const generatePDF = async () => {
-    const element = document.getElementById("advancement-pdf")
-    if (!element) {
-      console.error("Élément PDF introuvable")
-      return
-    }
+  const generateBonAvancement = () => {
+    if (!reservation) return
 
-    try {
-      // Importer html2canvas dynamiquement
-      const html2canvas = (await import("html2canvas")).default
-      const { jsPDF } = await import("jspdf")
+    const canvas = document.createElement("canvas")
+    canvas.width = 600
+    canvas.height = 800
+    const ctx = canvas.getContext("2d")!
 
-      // Créer le canvas à partir de l'élément
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: "#ffffff",
-        logging: false,
-        windowWidth: 800,
-        windowHeight: element.scrollHeight,
-      })
+    // Fond blanc
+    ctx.fillStyle = "#ffffff"
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-      // Créer le PDF
-      const imgData = canvas.toDataURL("image/png")
-      const pdf = new jsPDF({
-        orientation: "portrait",
-        unit: "mm",
-        format: "a4",
-      })
+    // Header avec logo
+    ctx.fillStyle = "#1a1a1a"
+    ctx.fillRect(0, 0, canvas.width, 120)
 
-      const pdfWidth = pdf.internal.pageSize.getWidth()
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width
+    ctx.fillStyle = "#ffffff"
+    ctx.font = "bold 28px Arial"
+    ctx.fillText("Movie in the Park", 30, 60)
 
-      pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight)
-      pdf.save(`bon_avancement_${reservation.id}.pdf`)
-    } catch (error) {
-      console.error("Erreur génération PDF:", error)
-      alert("Erreur lors de la génération du PDF")
-    }
+    ctx.font = "16px Arial"
+    ctx.fillText("Bon d'avancement", 30, 90)
+
+    // Date d'émission
+    ctx.font = "14px Arial"
+    ctx.textAlign = "right"
+    ctx.fillText("Date d'émission", canvas.width - 30, 60)
+    ctx.font = "bold 16px Arial"
+    ctx.fillText(new Date().toLocaleDateString("fr-FR"), canvas.width - 30, 85)
+
+    // Section Informations du payeur
+    ctx.textAlign = "left"
+    ctx.fillStyle = "#333333"
+    ctx.font = "bold 18px Arial"
+    ctx.fillText("INFORMATIONS DU PAYEUR", 30, 180)
+
+    // Grille d'informations
+    ctx.font = "14px Arial"
+    ctx.fillStyle = "#666666"
+    ctx.fillText("Nom complet", 30, 220)
+    ctx.fillStyle = "#000000"
+    ctx.font = "bold 14px Arial"
+    ctx.fillText(reservation.payeur_name, 30, 240)
+
+    ctx.font = "14px Arial"
+    ctx.fillStyle = "#666666"
+    ctx.fillText("Téléphone", 320, 220)
+    ctx.fillStyle = "#000000"
+    ctx.font = "bold 14px Arial"
+    ctx.fillText(reservation.payeur_phone, 320, 240)
+
+    ctx.font = "14px Arial"
+    ctx.fillStyle = "#666666"
+    ctx.fillText("Email", 30, 280)
+    ctx.fillStyle = "#000000"
+    ctx.font = "bold 14px Arial"
+    ctx.fillText(reservation.payeur_email || "—", 30, 300)
+
+    ctx.font = "14px Arial"
+    ctx.fillStyle = "#666666"
+    ctx.fillText("Pack", 320, 280)
+    ctx.fillStyle = "#000000"
+    ctx.font = "bold 14px Arial"
+    ctx.fillText(reservation.pack_name, 320, 300)
+
+    // Encadré détails du paiement
+    ctx.strokeStyle = "#e0e0e0"
+    ctx.lineWidth = 2
+    ctx.strokeRect(30, 350, canvas.width - 60, 180)
+
+    ctx.fillStyle = "#000000"
+    ctx.font = "bold 18px Arial"
+    ctx.fillText("Détails du paiement", 50, 390)
+
+    // Prix total
+    ctx.font = "14px Arial"
+    ctx.fillStyle = "#666666"
+    ctx.fillText("Prix total", 50, 430)
+    ctx.fillStyle = "#000000"
+    ctx.font = "bold 20px Arial"
+    ctx.textAlign = "right"
+    ctx.fillText(`${reservation.total_price.toLocaleString()} XAF`, canvas.width - 50, 430)
+
+    // Montant payé
+    ctx.textAlign = "left"
+    ctx.font = "14px Arial"
+    ctx.fillStyle = "#666666"
+    ctx.fillText("Montant payé", 50, 470)
+    ctx.fillStyle = "#16a34a"
+    ctx.font = "bold 20px Arial"
+    ctx.textAlign = "right"
+    ctx.fillText(`${reservation.total_paid.toLocaleString()} XAF`, canvas.width - 50, 470)
+
+    // Montant restant
+    ctx.textAlign = "left"
+    ctx.font = "bold 16px Arial"
+    ctx.fillStyle = "#000000"
+    ctx.fillText("Montant restant", 50, 510)
+    ctx.fillStyle = "#ea580c"
+    ctx.font = "bold 24px Arial"
+    ctx.textAlign = "right"
+    ctx.fillText(`${reservation.remaining_amount.toLocaleString()} XAF`, canvas.width - 50, 510)
+
+    // Footer
+    ctx.textAlign = "center"
+    ctx.font = "11px Arial"
+    ctx.fillStyle = "#999999"
+    ctx.fillText(
+      `Document généré automatiquement — Movie in the Park`,
+      canvas.width / 2,
+      720
+    )
+    ctx.fillText(
+      `Réservation #${reservation.id.substring(0, 8)}`,
+      canvas.width / 2,
+      740
+    )
+
+    // Télécharger
+    canvas.toBlob((blob) => {
+      if (!blob) return
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = `bon-avancement-${reservation.payeur_name.replace(/\s+/g, "-")}.png`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    })
   }
 
-  // --------------------------------------------------------------
-  // 🚀 UI PAGE PRINCIPALE
-  // --------------------------------------------------------------
+  const renderPaymentSummary = () => {
+    if (!reservation) return null
+    const montantRestant = reservation.remaining_amount
+    const isFullyPaid = montantRestant === 0
+    const hasTicket = reservation.status === "ticket_generated" && ticketData
+
+    return (
+      <div className="bg-card border rounded-lg p-6">
+        <h2 className="text-lg font-semibold mb-4">Résumé paiement</h2>
+
+        <div className="space-y-3">
+          <div>
+            <p className="text-muted-foreground text-sm">Total payé</p>
+            <p className="text-2xl font-bold text-green-600">
+              {reservation.total_paid.toLocaleString()} XAF
+            </p>
+          </div>
+
+          <div>
+            <p className="text-muted-foreground text-sm">Montant restant</p>
+            <p className="text-2xl font-bold text-orange-600">{montantRestant.toLocaleString()} XAF</p>
+          </div>
+        </div>
+
+        <div className="mt-6 space-y-2">
+          {montantRestant > 0 && (
+            <button
+              onClick={generateBonAvancement}
+              className="w-full flex items-center justify-center bg-orange-600 text-white px-4 py-2 rounded-md hover:bg-orange-700 transition-colors"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Bon d'avancement
+            </button>
+          )}
+
+          {isFullyPaid && !hasTicket && (
+            <button
+              onClick={handleGenerateTicket}
+              disabled={loadingTicket}
+              className="w-full bg-primary text-primary-foreground px-4 py-2 rounded-md hover:bg-primary/90 transition-colors font-medium disabled:opacity-50"
+            >
+              {loadingTicket ? "Génération..." : "Générer le ticket"}
+            </button>
+          )}
+
+          {isFullyPaid && hasTicket && (
+            <>
+              <button
+                onClick={handleViewTicket}
+                className="w-full flex items-center justify-center bg-primary text-primary-foreground px-4 py-2 rounded-md hover:bg-primary/90 transition-colors font-medium"
+              >
+                <Eye className="w-4 h-4 mr-2" />
+                Voir le ticket
+              </button>
+              <button
+                onClick={handleDownloadTicket}
+                className="w-full flex items-center justify-center bg-secondary text-foreground px-4 py-2 rounded-md hover:bg-secondary/80 transition-colors font-medium"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Télécharger le ticket
+              </button>
+            </>
+          )}
+        </div>
+
+        {hasTicket && ticketData && (
+          <div className="mt-4 p-3 bg-secondary rounded-md">
+            <p className="text-xs text-muted-foreground">Numéro du ticket</p>
+            <p className="text-sm font-mono font-bold">{ticketData.ticket_number}</p>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  if (!isAuthenticated || !reservation) return null
+
+  const badge = mapStatus(reservation.status)
 
   return (
     <AdminLayout>
       <div className="space-y-6">
-
-        {/* HEADER */}
         <div className="flex items-center gap-4">
           <button onClick={() => router.back()} className="p-2 hover:bg-secondary rounded-md">
             <ArrowLeft className="w-5 h-5" />
@@ -382,15 +459,11 @@ export default function ReservationDetailsPage() {
           </div>
         </div>
 
-        {/* CONTENU */}
         {loadingData ? (
           <p className="text-muted-foreground">Chargement…</p>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            
-            {/* LEFT SIDE */}
             <div className="lg:col-span-2 space-y-6">
-
               {/* PAYEUR */}
               <div className="bg-card border rounded-lg p-6">
                 <h2 className="text-xl font-semibold mb-4">Informations du payeur</h2>
@@ -417,6 +490,11 @@ export default function ReservationDetailsPage() {
                   </div>
 
                   <div>
+                    <p className="text-muted-foreground">Quantité</p>
+                    <p className="font-medium">{reservation.quantity}</p>
+                  </div>
+
+                  <div>
                     <p className="text-muted-foreground">Prix total</p>
                     <p className="font-medium">{reservation.total_price.toLocaleString()} XAF</p>
                   </div>
@@ -430,17 +508,30 @@ export default function ReservationDetailsPage() {
 
               {/* PARTICIPANTS */}
               <div className="bg-card border rounded-lg p-6">
-                <h2 className="text-xl font-semibold mb-4">Participants</h2>
+                <h2 className="text-xl font-semibold mb-4">
+                  Participants ({reservation.participants.length}/{reservation.quantity})
+                </h2>
 
                 <div className="space-y-3">
-                  {reservation.participants.map((p) => (
+                  {reservation.participants.map((p, index) => (
                     <div key={p.id} className="p-3 bg-secondary rounded-md">
-                      <p className="font-medium">{p.name}</p>
+                      <p className="font-medium">
+                        {index === 0 ? "👤 " : ""}
+                        {p.name}
+                      </p>
                       {p.email && <p className="text-xs text-muted-foreground">{p.email}</p>}
                       {p.phone && <p className="text-xs text-muted-foreground">{p.phone}</p>}
                     </div>
                   ))}
                 </div>
+
+                {reservation.participants.length < reservation.quantity && (
+                  <div className="mt-4 p-3 bg-orange-500/10 border border-orange-500/50 rounded-md">
+                    <p className="text-sm text-orange-600">
+                      ⚠️ Places restantes: {reservation.quantity - reservation.participants.length}
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* PAYMENTS */}
@@ -456,27 +547,33 @@ export default function ReservationDetailsPage() {
                   </button>
                 </div>
 
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr>
-                      <th className="text-left">Montant</th>
-                      <th className="text-left">Méthode</th>
-                      <th className="text-left">Date</th>
-                      <th className="text-left">Admin</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {reservation.payments.map((p) => (
-                      <tr key={p.id}>
-                        <td className="font-medium">{p.amount.toLocaleString()} XAF</td>
-                        <td>{p.method}</td>
-                        <td>{new Date(p.createdAt).toLocaleDateString("fr-FR")}</td>
-                        <td>{p.creator?.name || "Admin"}</td>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b">
+                        <th className="text-left py-2">Montant</th>
+                        <th className="text-left py-2">Méthode</th>
+                        <th className="text-left py-2">Date</th>
+                        <th className="text-left py-2">Admin</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+
+                    <tbody>
+                      {reservation.payments.map((p) => (
+                        <tr key={p.id} className="border-b">
+                          <td className="font-medium py-2">{p.amount.toLocaleString()} XAF</td>
+                          <td className="py-2">{p.method}</td>
+                          <td className="py-2">{new Date(p.createdAt).toLocaleDateString("fr-FR")}</td>
+                          <td className="py-2">{p.creator?.name || "Admin"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {reservation.payments.length === 0 && (
+                    <p className="text-center text-muted-foreground py-4">Aucun paiement enregistré</p>
+                  )}
+                </div>
               </div>
 
               {/* ACTION LOGS */}
@@ -486,57 +583,24 @@ export default function ReservationDetailsPage() {
                 <div className="space-y-3">
                   {reservation.actions.map((a) => (
                     <div key={a.id} className="p-3 bg-secondary rounded-md text-sm">
-                      <p className="font-medium">{mapActionDescription(a)}</p>                      
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(a.createdAt).toLocaleString("fr-FR")}
-                      </p>
+                      <p className="font-medium">{mapActionDescription(a)}</p>
+                      <div className="flex justify-between items-center mt-1">
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(a.createdAt).toLocaleString("fr-FR")}
+                        </p>
+                        {a.user && (
+                          <p className="text-xs text-muted-foreground">
+                            Par : <span className="font-medium">{a.user.name}</span>
+                          </p>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
               </div>
-
             </div>
 
-            {/* RIGHT SUMMARY */}
-            <div className="space-y-6">
-              <div className="bg-card border rounded-lg p-6">
-                <h2 className="text-lg font-semibold mb-4">Résumé paiement</h2>
-
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-muted-foreground text-sm">Total payé</p>
-                    <p className="text-2xl font-bold text-green-600">{totalPayé.toLocaleString()} XAF</p>
-                  </div>
-
-                  <div>
-                    <p className="text-muted-foreground text-sm">Montant restant</p>
-                    <p className="text-2xl font-bold text-orange-600">{montantRestant.toLocaleString()} XAF</p>
-                  </div>
-                </div>
-
-                <div className="mt-6 space-y-2">
-                  {montantRestant > 0 && (
-                    <button
-                      onClick={() => setShowAdvancementPDF(true)}
-                      className="w-full flex items-center justify-center bg-orange-600 text-white px-4 py-2 rounded-md"
-                    >
-                      <Download className="w-4 h-4 mr-2" />
-                      Bon d'avancement
-                    </button>
-                  )}
-
-                  {montantRestant === 0 && (
-                    <button
-                      onClick={() => handleGenerateTicket()}
-                      className="w-full bg-primary text-primary-foreground px-4 py-2 rounded-md"
-                    >
-                      Générer ticket
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-
+            <div className="space-y-6">{renderPaymentSummary()}</div>
           </div>
         )}
       </div>
@@ -550,12 +614,13 @@ export default function ReservationDetailsPage() {
 
           <div className="space-y-4 py-4">
             <div>
-              <label className="text-sm">Montant</label>
+              <label className="text-sm">Montant (XAF)</label>
               <input
                 type="number"
                 value={newPayment.amount}
                 onChange={(e) => setNewPayment({ ...newPayment, amount: e.target.value })}
                 className="w-full px-3 py-2 bg-input border rounded-md"
+                placeholder="0"
               />
             </div>
 
@@ -568,6 +633,7 @@ export default function ReservationDetailsPage() {
               >
                 <option value="cash">Cash</option>
                 <option value="momo">Mobile Money</option>
+                <option value="card">Carte bancaire</option>
               </select>
             </div>
           </div>
@@ -577,263 +643,39 @@ export default function ReservationDetailsPage() {
               Annuler
             </button>
 
-            <button
-              onClick={handleAddPayment}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
-            >
+            <button onClick={handleAddPayment} className="px-4 py-2 bg-primary text-primary-foreground rounded-md">
               Ajouter
             </button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* QR CODE */}
-      <Dialog open={showQRCode} onOpenChange={setShowQRCode}>
-        <DialogContent className="bg-card border rounded-lg max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Ticket généré</DialogTitle>
+      {/* PREVIEW TICKET */}
+      <Dialog open={showTicketPreview} onOpenChange={setShowTicketPreview}>
+        <DialogContent className="bg-card border rounded-lg max-w-4xl max-h-[90vh] p-0">
+          <DialogHeader className="p-6 pb-0">
+            <DialogTitle>Aperçu du ticket</DialogTitle>
           </DialogHeader>
 
-          <div className="py-6 text-center">
-            {ticketGenerating ? (
-              <p>Génération du ticket…</p>
-            ) : (
-              <>
-                {ticketDataUrl ? (
-                  <>
-                    <img src={ticketDataUrl} alt="Ticket" className="mx-auto w-full rounded-md shadow-md" />
-                    <p className="font-semibold mt-3">Code : {ticketCode}</p>
-                    <p className="text-sm text-muted-foreground">{reservation.payeur_name}</p>
-
-                    <a
-                      href={ticketDataUrl}
-                      download={`ticket_${ticketCode || reservation.id}.png`}
-                      className="mt-4 inline-block w-full bg-primary text-primary-foreground rounded-md px-4 py-2 text-center"
-                    >
-                      <Download className="w-4 h-4 inline mr-2" /> Télécharger
-                    </a>
-                    {ticketPdfUrl && (
-                      <a
-                        href={ticketPdfUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-2 inline-block w-full bg-secondary text-gray-900 rounded-md px-4 py-2 text-center"
-                      >
-                        Ouvrir PDF serveur
-                      </a>
-                    )}
-                  </>
-                ) : (
-                  <p>Impossible de générer le ticket.</p>
-                )}
-              </>
+          <div className="px-6 py-4 flex-1 overflow-hidden">
+            {ticketData?.pdf_url && (
+              <iframe
+                src={ticketData.pdf_url}
+                className="w-full h-[65vh] border rounded-md"
+                title="Aperçu du ticket"
+              />
             )}
           </div>
-        </DialogContent>
-      </Dialog>
 
-      {/* -------------------------------------------------------- */}
-      {/* BON D'AVANCEMENT – DESIGN EXACT DE L'IMAGE              */}
-      {/* -------------------------------------------------------- */}
-      <Dialog open={showAdvancementPDF} onOpenChange={setShowAdvancementPDF}>
-        <DialogContent className="max-w-2xl max-h-screen overflow-y-auto bg-white">
-          <DialogHeader>
-            <VisuallyHidden>
-              <DialogTitle>Bon d'avancement</DialogTitle>
-              <DialogDescription>Document retraçant les paiements</DialogDescription>
-            </VisuallyHidden>
-          </DialogHeader>
-
-          {/* BON STRUCTURÉ - EXACTEMENT COMME L'IMAGE */}
-          <div 
-            id="advancement-pdf" 
-            className="bg-white text-black"
-            style={{ 
-              width: "700px", 
-              padding: "40px",
-              fontFamily: "system-ui, -apple-system, sans-serif"
-            }}
-          >
-            {/* HEADER */}
-            <div style={{ 
-              display: "flex", 
-              justifyContent: "space-between", 
-              alignItems: "flex-start",
-              borderBottom: "1px solid #e5e7eb",
-              paddingBottom: "20px",
-              marginBottom: "30px"
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-                <img
-                  src={`${typeof window !== "undefined" ? window.location.origin : ""}/logo.png`}
-                  style={{ width: "64px", height: "64px", objectFit: "contain" }}
-                  alt="Logo"
-                />
-                <div>
-                  <h1 style={{ fontSize: "24px", fontWeight: "700", margin: "0 0 4px 0" }}>
-                    Movie in the Park
-                  </h1>
-                  <p style={{ fontSize: "14px", color: "#6b7280", margin: "0" }}>
-                    Bon d'avancement
-                  </p>
-                </div>
-              </div>
-
-              <div style={{ textAlign: "right" }}>
-                <p style={{ fontSize: "12px", color: "#6b7280", margin: "0 0 4px 0" }}>
-                  Date d'émission
-                </p>
-                <p style={{ fontSize: "14px", fontWeight: "600", margin: "0" }}>
-                  {new Date().toLocaleDateString("fr-FR")}
-                </p>
-              </div>
-            </div>
-
-            {/* INFORMATIONS DU PAYEUR */}
-            <div style={{ marginBottom: "30px" }}>
-              <h2 style={{ 
-                fontSize: "14px", 
-                fontWeight: "600", 
-                textTransform: "uppercase",
-                color: "#374151",
-                marginBottom: "16px",
-                letterSpacing: "0.05em"
-              }}>
-                Informations du payeur
-              </h2>
-
-              <div style={{ 
-                display: "grid", 
-                gridTemplateColumns: "1fr 1fr", 
-                gap: "16px",
-                fontSize: "14px"
-              }}>
-                <div>
-                  <p style={{ fontSize: "12px", color: "#6b7280", margin: "0 0 4px 0" }}>
-                    Nom complet
-                  </p>
-                  <p style={{ fontWeight: "500", margin: "0" }}>
-                    {reservation.payeur_name}
-                  </p>
-                </div>
-
-                <div>
-                  <p style={{ fontSize: "12px", color: "#6b7280", margin: "0 0 4px 0" }}>
-                    Téléphone
-                  </p>
-                  <p style={{ fontWeight: "500", margin: "0" }}>
-                    {reservation.payeur_phone}
-                  </p>
-                </div>
-
-                <div>
-                  <p style={{ fontSize: "12px", color: "#6b7280", margin: "0 0 4px 0" }}>
-                    Email
-                  </p>
-                  <p style={{ fontWeight: "500", margin: "0" }}>
-                    {reservation.payeur_email}
-                  </p>
-                </div>
-
-                <div>
-                  <p style={{ fontSize: "12px", color: "#6b7280", margin: "0 0 4px 0" }}>
-                    Pack
-                  </p>
-                  <p style={{ fontWeight: "500", margin: "0" }}>
-                    {reservation.pack_name}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* DÉTAILS DU PAIEMENT */}
-            <div style={{ 
-              border: "1px solid #e5e7eb", 
-              borderRadius: "8px", 
-              padding: "24px",
-              marginBottom: "30px"
-            }}>
-              <h2 style={{ 
-                fontSize: "14px", 
-                fontWeight: "600",
-                color: "#374151",
-                marginBottom: "16px"
-              }}>
-                Détails du paiement
-              </h2>
-
-              <div style={{ fontSize: "14px" }}>
-                <div style={{ 
-                  display: "flex", 
-                  justifyContent: "space-between", 
-                  marginBottom: "12px" 
-                }}>
-                  <span style={{ color: "#6b7280" }}>Prix total</span>
-                  <span style={{ fontWeight: "600" }}>
-                    {reservation.total_price.toLocaleString()} XAF
-                  </span>
-                </div>
-
-                <div style={{ 
-                  display: "flex", 
-                  justifyContent: "space-between", 
-                  marginBottom: "12px" 
-                }}>
-                  <span style={{ color: "#6b7280" }}>Montant payé</span>
-                  <span style={{ fontWeight: "600", color: "#16a34a" }}>
-                    {reservation.total_paid.toLocaleString()} XAF
-                  </span>
-                </div>
-
-                <div style={{ 
-                  borderTop: "1px solid #e5e7eb", 
-                  paddingTop: "12px",
-                  display: "flex", 
-                  justifyContent: "space-between"
-                }}>
-                  <span style={{ fontWeight: "700" }}>Montant restant</span>
-                  <span style={{ fontWeight: "700", fontSize: "18px", color: "#ea580c" }}>
-                    {reservation.remaining_amount.toLocaleString()} XAF
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* FOOTER */}
-            <div style={{ 
-              textAlign: "center", 
-              fontSize: "11px", 
-              color: "#6b7280",
-              borderTop: "1px solid #e5e7eb",
-              paddingTop: "20px"
-            }}>
-              <p style={{ margin: "0 0 4px 0" }}>
-                Document généré automatiquement — Movie in the Park
-              </p>
-              <p style={{ margin: "0" }}>
-                Réservation #{reservation.id}
-              </p>
-            </div>
-          </div>
-
-          {/* BUTTONS */}
-          <DialogFooter className="bg-gray-50 p-4">
-            <button
-              onClick={() => setShowAdvancementPDF(false)}
-              className="px-4 py-2 bg-secondary text-gray-900 rounded-md"
-            >
+          <DialogFooter className="px-6 py-4 border-t flex gap-2">
+            <Button onClick={() => setShowTicketPreview(false)} variant="outline">
               Fermer
-            </button>
-
-            <button
-              onClick={generatePDF}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-md flex items-center gap-2"
-            >
-              <Download className="w-4 h-4" />
-              Télécharger PDF
-            </button>
+            </Button>
+            <Button onClick={handleDownloadTicket} className="bg-primary text-primary-foreground">
+              <Download className="w-4 h-4 mr-2" />
+              Télécharger
+            </Button>
           </DialogFooter>
-
         </DialogContent>
       </Dialog>
     </AdminLayout>

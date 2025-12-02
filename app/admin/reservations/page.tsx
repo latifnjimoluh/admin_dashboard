@@ -11,6 +11,7 @@ interface ReservationRow {
   nom: string
   telephone: string
   pack: string
+  quantity: number
   statut: string
   prixTotal: number
   totalPayé: number
@@ -33,17 +34,17 @@ export default function ReservationsPage() {
   const loadReservations = async () => {
     try {
       const res = await api.reservations.getAll()
-      const raw = res.reservations ?? []
+      const raw = res.data?.reservations || res.data || []
 
-      // ---- Mapping backend → frontend ----
       const mapped: ReservationRow[] = raw.map((r: any) => ({
         id: r.id,
         nom: r.payeur_name,
         telephone: r.payeur_phone,
-        pack: r.pack?.name || "Pack inconnu",
+        pack: r.pack?.name || r.pack_name_snapshot || "Pack inconnu",
+        quantity: r.quantity || 1,
         statut: mapBackendStatus(r.status),
         prixTotal: r.total_price,
-        totalPayé: r.payments?.reduce((sum: number, p: any) => sum + p.amount, 0) || 0,
+        totalPayé: r.total_paid || 0,
         dateReservation: new Date(r.createdAt).toLocaleDateString("fr-FR"),
       }))
 
@@ -100,19 +101,19 @@ export default function ReservationsPage() {
   }
 
   const getStatutBadge = (statut: string) => {
-    const variants = {
+    const variants: any = {
       en_attente: "badge-en-attente",
       partiel: "badge-partiel",
       payé: "badge-paye",
       ticket_généré: "badge-ticket-genere",
     }
-    const labels = {
+    const labels: any = {
       en_attente: "En attente",
       partiel: "Partiel",
       payé: "Payé",
       ticket_généré: "Ticket généré",
     }
-    return { className: variants[statut], label: labels[statut] }
+    return { className: variants[statut] || "badge-en-attente", label: labels[statut] || statut }
   }
 
   const montantRestant = (r: ReservationRow) => r.prixTotal - r.totalPayé
@@ -171,10 +172,11 @@ export default function ReservationsPage() {
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr>
+                <tr className="bg-secondary/50">
                   <th className="px-6 py-3 text-left text-sm font-semibold">Nom</th>
                   <th className="px-6 py-3 text-left text-sm font-semibold">Téléphone</th>
                   <th className="px-6 py-3 text-left text-sm font-semibold">Pack</th>
+                  <th className="px-6 py-3 text-center text-sm font-semibold">Qté</th>
                   <th className="px-6 py-3 text-left text-sm font-semibold">Statut</th>
                   <th className="px-6 py-3 text-right text-sm font-semibold">Total</th>
                   <th className="px-6 py-3 text-right text-sm font-semibold">Payé</th>
@@ -186,10 +188,13 @@ export default function ReservationsPage() {
                 {filteredReservations.map((r) => {
                   const badge = getStatutBadge(r.statut)
                   return (
-                    <tr key={r.id} className="hover:bg-secondary/50 transition-colors">
-                      <td className="px-6 py-3 text-sm">{r.nom}</td>
+                    <tr key={r.id} className="hover:bg-secondary/50 transition-colors border-t border-border">
+                      <td className="px-6 py-3 text-sm font-medium">{r.nom}</td>
                       <td className="px-6 py-3 text-sm text-muted-foreground">{r.telephone}</td>
                       <td className="px-6 py-3 text-sm">{r.pack}</td>
+                      <td className="px-6 py-3 text-center text-sm">
+                        <span className="px-2 py-1 bg-secondary rounded-md font-medium">{r.quantity}</span>
+                      </td>
                       <td className="px-6 py-3 text-sm">
                         <span className={`badge ${badge.className}`}>{badge.label}</span>
                       </td>

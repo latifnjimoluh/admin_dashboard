@@ -4,42 +4,37 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { AdminLayout } from "@/components/admin/admin-layout"
 import { ArrowLeft, Plus, Trash2 } from "lucide-react"
+import { api } from "@/lib/api"
 
-type PackType = "Simple" | "VIP" | "Couple" | "Famille" | "Stand Entreprise"
+interface Pack {
+  id: string
+  name: string
+  price: number
+  description: string
+  capacity: number
+}
 
 interface Participant {
-  nom: string
-  telephone?: string
+  name: string
   email?: string
-}
-
-const PACK_PRICES: Record<PackType, number> = {
-  Simple: 15000,
-  VIP: 30000,
-  Couple: 50000,
-  Famille: 75000,
-  "Stand Entreprise": 100000,
-}
-
-const PACK_PARTICIPANT_COUNTS: Record<PackType, { min: number; max: number }> = {
-  Simple: { min: 1, max: 1 },
-  VIP: { min: 1, max: 1 },
-  Couple: { min: 2, max: 2 },
-  Famille: { min: 3, max: 5 },
-  "Stand Entreprise": { min: 1, max: 3 },
+  phone?: string
 }
 
 export default function CreateReservationPage() {
   const router = useRouter()
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
+  const [packs, setPacks] = useState<Pack[]>([])
   const [payerName, setPayerName] = useState("")
   const [payerPhone, setPayerPhone] = useState("")
   const [payerEmail, setPayerEmail] = useState("")
-  const [selectedPack, setSelectedPack] = useState<PackType>("Simple")
-  const [participants, setParticipants] = useState<Participant[]>([{ nom: "" }])
-  const [newParticipant, setNewParticipant] = useState({ nom: "", telephone: "", email: "" })
+  const [selectedPackId, setSelectedPackId] = useState<string>("")
+  const [quantity, setQuantity] = useState(1)
+  const [capacityMax, setCapacityMax] = useState<number>(1)
+  const [participants, setParticipants] = useState<Participant[]>([{ name: "" }])
 
   useEffect(() => {
     const token = localStorage.getItem("admin_token")
@@ -47,27 +42,59 @@ export default function CreateReservationPage() {
       router.push("/admin/login")
     } else {
       setIsAuthenticated(true)
-      setIsLoading(false)
+      loadPacks()
     }
   }, [router])
 
+  // Quand le pack sélectionné change, récupérer la quantité par défaut depuis le pack (capacity)
   useEffect(() => {
-    const limits = PACK_PARTICIPANT_COUNTS[selectedPack]
-    // Initialize participants for the selected pack
-    if (selectedPack === "Simple" || selectedPack === "VIP") {
-      setParticipants([{ nom: payerName }])
-    } else if (selectedPack === "Couple") {
-      setParticipants([{ nom: payerName }, { nom: "" }])
-    } else if (selectedPack === "Famille") {
-      setParticipants([{ nom: payerName }, { nom: "" }, { nom: "" }])
+    const selected = packs.find((p) => p.id === selectedPackId)
+    if (selected) {
+      setCapacityMax(selected.capacity ?? 1)
+      // ne pas forcer la quantité réservée ici ; la quantité réelle envoyée sera le nombre de participants
     }
-  }, [selectedPack, payerName])
+  }, [selectedPackId, packs])
+
+  useEffect(() => {
+    // Synchroniser le premier participant avec le payeur
+    setParticipants((prev) => [{ name: payerName, email: payerEmail, phone: payerPhone }, ...prev.slice(1)])
+  }, [payerName, payerEmail, payerPhone])
+
+  // Quand la quantité change: ne pas pré-remplir les nouveaux slots,
+  // mais tronquer la liste si la quantité diminue.
+  useEffect(() => {
+    setParticipants((prev) => {
+      const arr = [...prev]
+      if (arr.length === 0) arr.push({ name: payerName })
+      if (arr.length > capacityMax) return arr.slice(0, capacityMax)
+      return arr
+    })
+  }, [capacityMax, payerName])
+
+  const loadPacks = async () => {
+    try {
+      const response = await api.packs.getAll("?is_active=true")
+
+      if (response.status === 200) {
+        const packsList = Array.isArray(response.data) ? response.data : response.data?.packs || []
+        setPacks(packsList)
+        if (packsList.length > 0) {
+          setSelectedPackId(packsList[0].id)
+        }
+      }
+    } catch (err) {
+      console.error("Error loading packs:", err)
+      setError("Erreur lors du chargement des packs")
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   const handleAddParticipant = () => {
-    const limits = PACK_PARTICIPANT_COUNTS[selectedPack]
-    if (participants.length < limits.max) {
-      setParticipants([...participants, { nom: "" }])
-    }
+    setParticipants((prev) => {
+      if (prev.length >= capacityMax) return prev
+      return [...prev, { name: "" }]
+    })
   }
 
   const handleRemoveParticipant = (index: number) => {
@@ -82,55 +109,92 @@ export default function CreateReservationPage() {
     setParticipants(updated)
   }
 
-  const handleCreateReservation = () => {
+  const handleCreateReservation = async () => {
     // Validation
+    const reservedSeats = Math.max(1, participants.length)
+
     if (!payerName || !payerPhone) {
-      alert("Veuillez remplir le nom et téléphone du payeur")
+      setError("Veuillez remplir le nom et téléphone du payeur")
       return
     }
 
-    if (participants.some((p, i) => i > 0 && !p.nom)) {
-      alert("Veuillez remplir les noms de tous les participants")
+    if (!selectedPackId) {
+      setError("Veuillez sélectionner un pack")
       return
     }
 
-    // Create mock reservation
-    const newReservation = {
-      id: String(Math.floor(Math.random() * 10000)),
-      nom: payerName.split(" ")[payerName.split(" ").length - 1],
-      prenom: payerName.split(" ")[0],
-      telephone: payerPhone,
-      email: payerEmail,
-      pack: selectedPack,
-      prixTotal: PACK_PRICES[selectedPack],
-      statut: "en_attente" as const,
-      participants: participants.map((p, i) => ({
-        nom: p.nom,
-        role: i === 0 ? ("Payeur" as const) : ("Participant" as const),
-      })),
-      paiements: [],
-      historique: ["Réservation créée"],
-      dateReservation: new Date().toISOString().split("T")[0],
+    if (reservedSeats > capacityMax) {
+      setError("Le nombre de participants dépasse la capacité du pack")
+      return
     }
 
-    // Store in mock data (in a real app, send to backend)
-    console.log("[v0] New reservation created:", newReservation)
+    if (reservedSeats > 1 && participants.slice(0, reservedSeats).some((p, i) => i > 0 && !p.name)) {
+      setError("Veuillez remplir les noms de tous les participants")
+      return
+    }
 
-    // Redirect to reservation details
-    router.push(`/admin/reservation/${newReservation.id}`)
+    try {
+      setIsSaving(true)
+      setError(null)
+
+      const reservationData = {
+        payeur_name: payerName,
+        payeur_phone: payerPhone,
+        payeur_email: payerEmail || undefined,
+        pack_id: selectedPackId,
+        // envoyer le nombre réel de places réservées
+        quantity: reservedSeats,
+        participants: participants
+          .slice(0, reservedSeats)
+          .map((p) => ({
+            name: p.name,
+            email: p.email,
+            phone: p.phone,
+          })),
+      }
+
+      const result = await api.reservations.create(reservationData)
+
+      if (result.status === 201 && result.data?.reservation?.id) {
+        router.push(`/admin/reservation/${result.data.reservation.id}`)
+      } else {
+        setError(result.message || "Erreur lors de la création de la réservation")
+      }
+    } catch (err: any) {
+      console.error("Error creating reservation:", err)
+      setError(err.message || "Erreur lors de la création de la réservation")
+    } finally {
+      setIsSaving(false)
+    }
   }
 
-  if (isLoading || !isAuthenticated) return null
+  if (isLoading || !isAuthenticated) {
+    return (
+      <AdminLayout>
+        <div className="flex items-center justify-center py-12">
+          <p className="text-muted-foreground">Chargement...</p>
+        </div>
+      </AdminLayout>
+    )
+  }
 
-  const limits = PACK_PARTICIPANT_COUNTS[selectedPack]
-  const totalPrice = PACK_PRICES[selectedPack]
+  const selectedPack = packs.find((p) => p.id === selectedPackId)
+  // Le prix est fixe pour le pack, il ne change pas selon le nombre de participants
+  const totalPrice = selectedPack ? selectedPack.price : 0
+  // Nombre de places réservées = nombre d'entrées participants (au moins 1: le payeur)
+  const reservedSeats = Math.max(1, participants.length)
 
   return (
     <AdminLayout>
       <div className="space-y-6">
         {/* Header */}
         <div className="flex items-center gap-4">
-          <button onClick={() => router.back()} className="p-2 hover:bg-secondary rounded-md transition-colors">
+          <button
+            onClick={() => router.back()}
+            aria-label="Retour"
+            title="Retour"
+            className="p-2 hover:bg-secondary rounded-md transition-colors"
+          >
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
@@ -138,6 +202,13 @@ export default function CreateReservationPage() {
             <p className="text-muted-foreground">Formulaire de création de réservation</p>
           </div>
         </div>
+
+        {/* Error Alert */}
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-4">
+            <p className="text-red-600 text-sm">{error}</p>
+          </div>
+        )}
 
         {/* Main Content */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -153,7 +224,7 @@ export default function CreateReservationPage() {
                     type="text"
                     value={payerName}
                     onChange={(e) => setPayerName(e.target.value)}
-                    placeholder="Jean Dupont"
+                    placeholder="nexus"
                     className="w-full px-4 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
                   />
                 </div>
@@ -175,7 +246,7 @@ export default function CreateReservationPage() {
                     type="email"
                     value={payerEmail}
                     onChange={(e) => setPayerEmail(e.target.value)}
-                    placeholder="jean@example.com"
+                    placeholder="nexus@example.com"
                     className="w-full px-4 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
                   />
                 </div>
@@ -185,90 +256,115 @@ export default function CreateReservationPage() {
             {/* Section 2: Sélection du pack */}
             <div className="bg-card border border-border rounded-lg p-6">
               <h2 className="text-xl font-semibold text-foreground mb-4">Sélection du pack</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {Object.entries(PACK_PRICES).map(([packName, price]) => (
-                  <button
-                    key={packName}
-                    onClick={() => setSelectedPack(packName as PackType)}
-                    className={`p-4 rounded-lg border-2 transition-all text-left ${
-                      selectedPack === packName
-                        ? "border-primary bg-primary/10"
-                        : "border-border hover:border-primary/50"
-                    }`}
-                  >
-                    <p className="font-semibold text-foreground">{packName}</p>
-                    <p className="text-sm text-muted-foreground">{price.toLocaleString()} XAF</p>
-                  </button>
-                ))}
-              </div>
+              {packs.length === 0 ? (
+                <p className="text-muted-foreground">Aucun pack disponible</p>
+              ) : (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {packs.map((pack) => (
+                      <button
+                        key={pack.id}
+                        onClick={() => setSelectedPackId(pack.id)}
+                        className={`p-4 rounded-lg border-2 transition-all text-left ${
+                          selectedPackId === pack.id
+                            ? "border-primary bg-primary/10"
+                            : "border-border hover:border-primary/50"
+                        }`}
+                      >
+                        <p className="font-semibold text-foreground">{pack.name}</p>
+                        <p className="text-sm text-muted-foreground">{pack.price.toLocaleString()} XAF</p>
+                        {pack.description && <p className="text-xs text-muted-foreground mt-1">{pack.description}</p>}
+                      </button>
+                    ))}
+                  </div>
+
+                  {selectedPack && (
+                    <div className="bg-secondary p-4 rounded-lg">
+                      <label className="block text-sm font-medium text-foreground mb-2">Capacité (max)</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={capacityMax}
+                        readOnly
+                        disabled
+                        aria-label="Capacité maximale du pack"
+                        className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground disabled:opacity-70"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
-            {/* Section 3: Participants */}
-            <div className="bg-card border border-border rounded-lg p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold text-foreground">Participants</h2>
-                {participants.length < limits.max && (
+            {/* Section 3: Participants - affichée quand un pack est sélectionné */}
+            {selectedPack && (
+              <div className="bg-card border border-border rounded-lg p-6">
+                  <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-semibold text-foreground">Participants</h2>
                   <button
                     onClick={handleAddParticipant}
-                    className="flex items-center gap-2 px-3 py-2 bg-primary hover:bg-accent text-primary-foreground rounded-md transition-colors text-sm font-medium"
+                    disabled={participants.length >= capacityMax}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-md transition-colors text-sm font-medium ${
+                      participants.length >= capacityMax
+                        ? "opacity-50 cursor-not-allowed bg-secondary text-muted-foreground"
+                        : "bg-primary hover:bg-accent text-primary-foreground"
+                    }`}
                   >
                     <Plus className="w-4 h-4" />
                     Ajouter
                   </button>
-                )}
-              </div>
+                </div>
 
-              <p className="text-xs text-muted-foreground mb-4">
-                {participants.length} / {limits.max} participants
-              </p>
+                <p className="text-xs text-muted-foreground mb-4">{participants.length}/{capacityMax} participants</p>
 
-              <div className="space-y-4">
-                {participants.map((participant, index) => (
-                  <div key={index} className="bg-secondary p-4 rounded-lg space-y-3">
-                    <div className="flex items-center justify-between">
-                      <p className="font-medium text-foreground">{index === 0 ? "Payeur" : `Participant ${index}`}</p>
-                      {index > 0 && (
-                        <button
-                          onClick={() => handleRemoveParticipant(index)}
-                          className="p-1 hover:bg-red-500/20 rounded transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4 text-red-600" />
-                        </button>
-                      )}
+                <div className="space-y-4">
+                  {participants.map((participant, index) => (
+                    <div key={index} className="bg-secondary p-4 rounded-lg space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="font-medium text-foreground">
+                          {index === 0 ? "Payeur" : `Participant ${index}`}
+                        </p>
+                        {index > 0 && (
+                          <button
+                            onClick={() => handleRemoveParticipant(index)}
+                            aria-label={`Retirer participant ${index}`}
+                            title={`Retirer participant ${index}`}
+                            className="p-1 hover:bg-red-500/20 rounded transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4 text-red-600" />
+                          </button>
+                        )}
+                      </div>
+
+                      <input
+                        type="text"
+                        value={participant.name}
+                        onChange={(e) => handleUpdateParticipant(index, { name: e.target.value })}
+                        placeholder="Nom complet"
+                        disabled={index === 0}
+                        className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50 disabled:opacity-50"
+                      />
+
+                      <input
+                        type="email"
+                        value={participant.email || ""}
+                        onChange={(e) => handleUpdateParticipant(index, { email: e.target.value })}
+                        placeholder="Email (optionnel)"
+                        className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
+                      />
+
+                      <input
+                        type="tel"
+                        value={participant.phone || ""}
+                        onChange={(e) => handleUpdateParticipant(index, { phone: e.target.value })}
+                        placeholder="Téléphone (optionnel)"
+                        className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
+                      />
                     </div>
-
-                    <input
-                      type="text"
-                      value={participant.nom}
-                      onChange={(e) => handleUpdateParticipant(index, { nom: e.target.value })}
-                      placeholder="Nom complet"
-                      disabled={index === 0}
-                      className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50 disabled:opacity-50"
-                    />
-
-                    {(selectedPack === "Famille" || selectedPack === "Stand Entreprise") && index > 0 && (
-                      <>
-                        <input
-                          type="tel"
-                          value={participant.telephone || ""}
-                          onChange={(e) => handleUpdateParticipant(index, { telephone: e.target.value })}
-                          placeholder="Téléphone (optionnel)"
-                          className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
-                        />
-
-                        <input
-                          type="email"
-                          value={participant.email || ""}
-                          onChange={(e) => handleUpdateParticipant(index, { email: e.target.value })}
-                          placeholder="Email (optionnel)"
-                          className="w-full px-3 py-2 bg-input border border-border rounded-md text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50"
-                        />
-                      </>
-                    )}
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* Sidebar - Summary */}
@@ -277,17 +373,28 @@ export default function CreateReservationPage() {
             <div className="bg-card border border-border rounded-lg p-6 sticky top-8">
               <h2 className="text-lg font-semibold text-foreground mb-4">Résumé</h2>
               <div className="space-y-4">
+                {/* Infos Payeur */}
+                <div className="bg-secondary/50 p-4 rounded-lg space-y-2 border border-border">
+                  <p className="text-xs font-medium text-muted-foreground uppercase">Payeur</p>
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-foreground">{payerName || "—"}</p>
+                    <p className="text-xs text-muted-foreground">{payerPhone || "—"}</p>
+                    {payerEmail && <p className="text-xs text-muted-foreground">{payerEmail}</p>}
+                  </div>
+                </div>
+
+                {/* Infos Pack */}
                 <div className="bg-secondary p-4 rounded-lg space-y-2">
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Pack:</span>
-                    <span className="font-medium text-foreground">{selectedPack}</span>
+                    <span className="font-medium text-foreground">{selectedPack?.name || "—"}</span>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Participants:</span>
-                    <span className="font-medium text-foreground">{participants.length}</span>
+                    <span className="text-muted-foreground">Places réservées:</span>
+                    <span className="font-medium text-foreground">{reservedSeats}/{capacityMax}</span>
                   </div>
                   <div className="border-t border-border pt-2 flex justify-between">
-                    <span className="text-foreground font-semibold">Prix total:</span>
+                    <span className="text-foreground font-semibold">Prix (par pack):</span>
                     <span className="text-2xl font-bold text-primary">{totalPrice.toLocaleString()} XAF</span>
                   </div>
                 </div>
@@ -295,9 +402,10 @@ export default function CreateReservationPage() {
                 <div className="space-y-2">
                   <button
                     onClick={handleCreateReservation}
-                    className="w-full px-4 py-3 bg-primary hover:bg-accent text-primary-foreground rounded-md transition-colors font-medium"
+                    disabled={isSaving || !selectedPack}
+                    className="w-full px-4 py-3 bg-primary hover:bg-accent text-primary-foreground rounded-md transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Créer réservation
+                    {isSaving ? "Création..." : "Créer réservation"}
                   </button>
                   <button
                     onClick={() => router.back()}
