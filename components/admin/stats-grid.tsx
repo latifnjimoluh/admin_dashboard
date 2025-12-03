@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react"
 import { StatCard } from "@/components/admin/stat-card"
+import { StatsGridSkeleton } from "@/components/admin/stats-grid-skeleton"
 import { Users, CreditCard, AlertCircle, Ticket, Check } from "lucide-react"
 import { api } from "@/lib/api"
+import { cacheManager } from "@/lib/cache"
 
 const mockStats = [
   {
@@ -62,6 +64,32 @@ export function StatsGrid() {
         setLoading(true)
         setError(null)
 
+        const cachedStats = cacheManager.get("dashboard_stats")
+        if (cachedStats && mounted) {
+          setStats(
+            cachedStats.map((stat: any, index: number) => ({
+              ...stat,
+              icon: mockStats[index].icon,
+              displayValue: stat.displayValue || stat.value,
+            })),
+          )
+          setLoading(false)
+          // Still fetch fresh data in background for next refresh
+          loadFreshStats()
+          return
+        }
+
+        await loadFreshStats()
+      } catch (err: any) {
+        console.error("Failed to load stats:", err)
+        if (mounted) setError("Impossible de charger les statistiques")
+      } finally {
+        if (mounted) setLoading(false)
+      }
+    }
+
+    const loadFreshStats = async () => {
+      try {
         const [resRes, resTickets, resPayments, resPacks, resScanStats] = await Promise.all([
           api.reservations.getAll("?page=1&pageSize=1000"),
           api.tickets.getAll(),
@@ -103,6 +131,8 @@ export function StatsGrid() {
           { ...mockStats[4], value: validatedEntries },
         ]
 
+        cacheManager.set("dashboard_stats", updatedStats, { expiryTime: 5 * 60 * 1000 })
+
         if (!mounted) return
 
         // Animate from 0 -> value
@@ -125,10 +155,8 @@ export function StatsGrid() {
 
         requestAnimationFrame(animate)
       } catch (err: any) {
-        console.error("Failed to load stats:", err)
+        console.error("Failed to load fresh stats:", err)
         if (mounted) setError("Impossible de charger les statistiques")
-      } finally {
-        if (mounted) setLoading(false)
       }
     }
 
@@ -138,6 +166,10 @@ export function StatsGrid() {
       mounted = false
     }
   }, [])
+
+  if (loading && stats.every((s) => s.displayValue === 0)) {
+    return <StatsGridSkeleton />
+  }
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

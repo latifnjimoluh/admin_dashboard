@@ -7,6 +7,7 @@ import { AdminLayout } from "@/components/admin/admin-layout"
 import { Search, Filter, Eye, Download, ChevronLeft, ChevronRight } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { api } from "@/lib/api"
+import "@/lib/mobile-download" // Ensure the library is imported
 
 interface Ticket {
   id: string
@@ -82,12 +83,14 @@ export default function TicketsPage() {
 
       if (response.status === 200) {
         setTickets(response.data?.tickets || [])
-        setPagination(response.data?.pagination || {
-          total: 0,
-          page: currentPage,
-          pageSize: 20,
-          totalPages: 0,
-        })
+        setPagination(
+          response.data?.pagination || {
+            total: 0,
+            page: currentPage,
+            pageSize: 20,
+            totalPages: 0,
+          },
+        )
       } else {
         setError("Erreur lors du chargement des tickets")
       }
@@ -116,19 +119,13 @@ export default function TicketsPage() {
   }
 
   const handleDownloadTicket = async (ticket: Ticket) => {
-    if (ticket.pdf_url) {
+    if (ticket.id) {
       try {
-        const { blob, filename } = await api.getBlob(ticket.pdf_url)
-        const url = URL.createObjectURL(blob)
-        const link = document.createElement("a")
-        link.href = url
-        link.download = filename || `ticket-${ticket.ticket_number}.pdf`
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-        URL.revokeObjectURL(url)
+        const { blob, filename } = await api.tickets.downloadPDF(ticket.id)
+        const { downloadUtils } = await import("@/lib/mobile-download")
+        await downloadUtils.smartDownload(blob, filename || `ticket-${ticket.ticket_number}.pdf`, "pdf")
       } catch (err) {
-        console.error("Error downloading ticket:", err)
+        console.error("[v0] Error downloading ticket:", err)
       }
     }
   }
@@ -148,7 +145,7 @@ export default function TicketsPage() {
                 qr_data_url: response.data.qr_data_url,
                 pdf_url: response.data.pdf_url,
               }
-            : null
+            : null,
         )
         await loadTickets()
       } else {
@@ -388,7 +385,7 @@ export default function TicketsPage() {
                 <div className="flex flex-col items-center">
                   <div className="w-56 h-56 bg-white p-4 rounded-lg flex items-center justify-center border border-gray-200">
                     <img
-                      src={selectedTicket.qr_data_url}
+                      src={selectedTicket.qr_data_url || "/placeholder.svg"}
                       alt="QR Code"
                       className="w-full h-full object-contain"
                     />
@@ -412,7 +409,9 @@ export default function TicketsPage() {
                   </div>
                   <div>
                     <p className="text-muted-foreground text-xs uppercase tracking-wide mb-1">Généré le</p>
-                    <p className="text-foreground">{new Date(selectedTicket.generated_at).toLocaleDateString("fr-FR")}</p>
+                    <p className="text-foreground">
+                      {new Date(selectedTicket.generated_at).toLocaleDateString("fr-FR")}
+                    </p>
                   </div>
                 </div>
 

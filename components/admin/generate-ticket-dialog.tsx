@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { api } from "@/lib/api"
+import { downloadUtils } from "@/lib/mobile-download"
 import {
   Dialog,
   DialogContent,
@@ -12,7 +13,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { TicketPreview } from "./ticket-preview"
-import { AlertCircle, CheckCircle2 } from "lucide-react"
+import { AlertCircle, CheckCircle2, Download, ImageIcon } from "lucide-react"
 
 interface GenerateTicketDialogProps {
   open: boolean
@@ -48,7 +49,7 @@ export function GenerateTicketDialog({
   const [step, setStep] = useState<"confirm" | "generating" | "preview" | "error">("confirm")
   const [ticketData, setTicketData] = useState<TicketResponse["ticket"] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  const [downloadLoading, setDownloadLoading] = useState<"pdf" | "image" | null>(null)
 
   const handleGenerate = async () => {
     setStep("generating")
@@ -64,15 +65,6 @@ export function GenerateTicketDialog({
 
       console.log("[v0] Ticket generated successfully:", response.ticket.ticket_number)
       setTicketData(response.ticket)
-
-      // Prepare PDF URL if provided
-      if (response.ticket.pdf_url) {
-        const pdfLink = response.ticket.pdf_url.startsWith("http")
-          ? response.ticket.pdf_url
-          : `http://localhost:3001${response.ticket.pdf_url}`
-        setPdfUrl(pdfLink)
-      }
-
       setStep("preview")
       onSuccess?.()
     } catch (err) {
@@ -82,18 +74,42 @@ export function GenerateTicketDialog({
     }
   }
 
+  const handleDownloadPDF = async () => {
+    if (!ticketData) return
+
+    setDownloadLoading("pdf")
+    try {
+      const { blob, filename } = await api.tickets.downloadPDF(ticketData.id)
+      await downloadUtils.smartDownload(blob, filename || `ticket-${ticketData.ticket_number}.pdf`, "pdf")
+    } catch (err) {
+      console.error("[v0] PDF download error:", err)
+      setError("Failed to download PDF")
+    } finally {
+      setDownloadLoading(null)
+    }
+  }
+
+  const handleDownloadImage = async () => {
+    if (!ticketData) return
+
+    setDownloadLoading("image")
+    try {
+      const { blob, filename } = await api.tickets.downloadImage(ticketData.id)
+      await downloadUtils.smartDownload(blob, filename || `qr-${ticketData.ticket_number}.png`, "image")
+    } catch (err) {
+      console.error("[v0] Image download error:", err)
+      setError("Failed to download image")
+    } finally {
+      setDownloadLoading(null)
+    }
+  }
+
   const handleClose = () => {
     setStep("confirm")
     setTicketData(null)
     setError(null)
-    setPdfUrl(null)
+    setDownloadLoading(null)
     onOpenChange(false)
-  }
-
-  const handleOpenPdf = () => {
-    if (pdfUrl) {
-      window.open(pdfUrl, "_blank")
-    }
   }
 
   return (
@@ -147,6 +163,34 @@ export function GenerateTicketDialog({
                 packName={packName}
                 reservationId={reservationId}
               />
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4 bg-secondary/50 rounded-lg border border-border">
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-foreground">Download Options:</p>
+                  <button
+                    onClick={handleDownloadPDF}
+                    disabled={downloadLoading === "pdf"}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Download className="w-4 h-4" />
+                    {downloadLoading === "pdf" ? "Downloading..." : "Download PDF"}
+                  </button>
+                  <p className="text-xs text-muted-foreground">For iPhone: Tap download to save to Files app</p>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-foreground">QR Code:</p>
+                  <button
+                    onClick={handleDownloadImage}
+                    disabled={downloadLoading === "image"}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-secondary text-foreground rounded-md hover:bg-secondary/80 transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <ImageIcon className="w-4 h-4" />
+                    {downloadLoading === "image" ? "Downloading..." : "Save QR Code"}
+                  </button>
+                  <p className="text-xs text-muted-foreground">For Android: Saves to gallery automatically</p>
+                </div>
+              </div>
             </div>
           )}
 
@@ -173,11 +217,6 @@ export function GenerateTicketDialog({
 
           {step === "preview" && (
             <>
-              {pdfUrl && (
-                <Button variant="outline" onClick={handleOpenPdf}>
-                  Open PDF
-                </Button>
-              )}
               <Button onClick={handleClose}>Done</Button>
             </>
           )}

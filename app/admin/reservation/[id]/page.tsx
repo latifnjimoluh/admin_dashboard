@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter, useParams } from "next/navigation"
 import { AdminLayout } from "@/components/admin/admin-layout"
-import { ArrowLeft, Plus, Download, Eye, FileText, Trash2 } from "lucide-react"
+import { ArrowLeft, Plus, Download, Eye } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
@@ -53,6 +53,7 @@ interface TicketData {
   qr_data_url: string
   pdf_url: string
   generated_at: string
+  id: string
 }
 
 export default function ReservationDetailsPage() {
@@ -69,13 +70,11 @@ export default function ReservationDetailsPage() {
   const [showAddPayment, setShowAddPayment] = useState(false)
   const [showTicketPreview, setShowTicketPreview] = useState(false)
   const [newPayment, setNewPayment] = useState({
-  amount: "",
-  method: "cash",
-  file: null as File | null,
-})
-const [paymentError, setPaymentError] = useState("");
-
-
+    amount: "",
+    method: "cash",
+    file: null as File | null,
+  })
+  const [paymentError, setPaymentError] = useState("")
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -200,62 +199,56 @@ const [paymentError, setPaymentError] = useState("");
   }
 
   const handleAddPayment = async () => {
-  setPaymentError("");
+    setPaymentError("")
 
-  const amountValue = Number(newPayment.amount);
+    const amountValue = Number(newPayment.amount)
 
-  if (!amountValue || isNaN(amountValue) || amountValue <= 0) {
-    setPaymentError("Veuillez saisir un montant valide.");
-    return;
-  }
+    if (!amountValue || isNaN(amountValue) || amountValue <= 0) {
+      setPaymentError("Veuillez saisir un montant valide.")
+      return
+    }
 
-  try {
-    await api.payments.add(reservation!.id, {
-      amount: amountValue,
-      method: newPayment.method,
-      proof: newPayment.file || undefined,
-    });
+    try {
+      await api.payments.add(reservation!.id, {
+        amount: amountValue,
+        method: newPayment.method,
+        proof: newPayment.file || undefined,
+      })
 
-    await loadReservation();
-    setShowAddPayment(false);
+      await loadReservation()
+      setShowAddPayment(false)
 
-    setNewPayment({
-      amount: "",
-      method: "cash",
-      file: null,
-    });
-  } catch (err: any) {
-  console.error("Erreur ajout paiement :", err);
+      setNewPayment({
+        amount: "",
+        method: "cash",
+        file: null,
+      })
+    } catch (err: any) {
+      console.error("Erreur ajout paiement :", err)
 
-  // ✔ Récupération correcte du message backend
-  const backendMsg =
-    err?.data?.message ||   // cas FormData
-    err?.message ||         // message retourné par api.ts
-    "";
+      // ✔ Récupération correcte du message backend
+      const backendMsg =
+        err?.data?.message || // cas FormData
+        err?.message || // message retourné par api.ts
+        ""
 
-  // 🔥 Détection du dépassement
-  if (backendMsg.includes("dépasse le montant restant")) {
+      // 🔥 Détection du dépassement
+      if (backendMsg.includes("dépasse le montant restant")) {
+        const match = backendMsg.match(/montant restant\s*$$(\d+)\s?XAF$$/i)
+        const montantRestant = match ? match[1] : null
 
-    const match = backendMsg.match(/montant restant\s*\((\d+)\s?XAF\)/i);
-    const montantRestant = match ? match[1] : null;
+        if (montantRestant) {
+          setPaymentError(
+            `La somme saisie est supérieure au montant restant (${montantRestant} XAF). Bien vouloir réessayer avec ${montantRestant} XAF ou moins.`,
+          )
+          return
+        }
+      }
 
-    if (montantRestant) {
-      setPaymentError(
-        `La somme saisie est supérieure au montant restant (${montantRestant} XAF). Bien vouloir réessayer avec ${montantRestant} XAF ou moins.`
-      );
-      return;
+      // 🔥 Afficher le message backend si aucun cas particulier
+      setPaymentError(backendMsg || "Une erreur est survenue lors de l'ajout du paiement.")
     }
   }
-
-  // 🔥 Afficher le message backend si aucun cas particulier
-  setPaymentError(
-    backendMsg || "Une erreur est survenue lors de l'ajout du paiement."
-  );
-}
-
-};
-
-
 
   const handleViewTicket = () => {
     if (ticketData?.pdf_url) {
@@ -263,15 +256,15 @@ const [paymentError, setPaymentError] = useState("");
     }
   }
 
-  const handleDownloadTicket = () => {
-    if (ticketData?.pdf_url) {
-      const link = document.createElement("a")
-      link.href = ticketData.pdf_url
-      link.download = `ticket-${ticketData.ticket_number}.pdf`
-      link.target = "_blank"
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
+  const handleDownloadTicket = async () => {
+    if (ticketData?.pdf_url && ticketData?.id) {
+      try {
+        const { blob, filename } = await api.tickets.downloadPDF(ticketData.id)
+        const { downloadUtils } = await import("@/lib/mobile-download")
+        await downloadUtils.smartDownload(blob, filename || `ticket-${ticketData.ticket_number}.pdf`, "pdf")
+      } catch (err) {
+        console.error("[v0] Error downloading ticket:", err)
+      }
     }
   }
 
@@ -449,10 +442,10 @@ const [paymentError, setPaymentError] = useState("");
             p.method === "cash"
               ? "Espèces"
               : p.method === "momo"
-              ? "Mobile Money"
-              : p.method === "card"
-              ? "Carte bancaire"
-              : p.method
+                ? "Mobile Money"
+                : p.method === "card"
+                  ? "Carte bancaire"
+                  : p.method
 
           ctx.font = "14px Arial"
           ctx.fillStyle = "#555"
@@ -467,7 +460,6 @@ const [paymentError, setPaymentError] = useState("");
           y += 24
         })
       }
-
 
       // Footer
       ctx.textAlign = "center"
@@ -520,9 +512,7 @@ const [paymentError, setPaymentError] = useState("");
         <div className="space-y-3">
           <div>
             <p className="text-muted-foreground text-sm">Total payé</p>
-            <p className="text-2xl font-bold text-green-600">
-              {reservation.total_paid.toLocaleString()} XAF
-            </p>
+            <p className="text-2xl font-bold text-green-600">{reservation.total_paid.toLocaleString()} XAF</p>
           </div>
 
           <div>
@@ -731,9 +721,7 @@ const [paymentError, setPaymentError] = useState("");
                     <div key={a.id} className="p-3 bg-secondary rounded-md text-sm">
                       <p className="font-medium">{mapActionDescription(a)}</p>
                       <div className="flex justify-between items-center mt-1">
-                        <p className="text-xs text-muted-foreground">
-                          {new Date(a.createdAt).toLocaleString("fr-FR")}
-                        </p>
+                        <p className="text-xs text-muted-foreground">{new Date(a.createdAt).toLocaleString("fr-FR")}</p>
                         {a.user && (
                           <p className="text-xs text-muted-foreground">
                             Par : <span className="font-medium">{formatUserLabel(a.user)}</span>
@@ -760,9 +748,7 @@ const [paymentError, setPaymentError] = useState("");
 
           {/* 🔥 MESSAGE D'ERREUR AFFICHÉ ICI */}
           {paymentError && (
-            <div className="text-red-600 bg-red-100 border border-red-300 p-2 rounded-md text-sm">
-              {paymentError}
-            </div>
+            <div className="text-red-600 bg-red-100 border border-red-300 p-2 rounded-md text-sm">{paymentError}</div>
           )}
 
           <div className="space-y-4 py-4">
@@ -784,13 +770,13 @@ const [paymentError, setPaymentError] = useState("");
             </div>
 
             <div>
-              <label htmlFor="payment-method" className="text-sm">Méthode</label>
+              <label htmlFor="payment-method" className="text-sm">
+                Méthode
+              </label>
               <select
                 id="payment-method"
                 value={newPayment.method}
-                onChange={(e) =>
-                  setNewPayment({ ...newPayment, method: e.target.value })
-                }
+                onChange={(e) => setNewPayment({ ...newPayment, method: e.target.value })}
                 className="w-full px-3 py-2 bg-input border rounded-md"
               >
                 <option value="cash">Cash</option>
@@ -816,40 +802,29 @@ const [paymentError, setPaymentError] = useState("");
           </div>
 
           <DialogFooter>
-            <button
-              onClick={() => setShowAddPayment(false)}
-              className="px-4 py-2 bg-secondary rounded-md"
-            >
+            <button onClick={() => setShowAddPayment(false)} className="px-4 py-2 bg-secondary rounded-md">
               Annuler
             </button>
 
-            <button
-              onClick={handleAddPayment}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
-            >
+            <button onClick={handleAddPayment} className="px-4 py-2 bg-primary text-primary-foreground rounded-md">
               Ajouter
             </button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
+      {/* PREVIEW TICKET */}
+      <Dialog open={showTicketPreview} onOpenChange={setShowTicketPreview}>
+        <DialogContent className="bg-card border rounded-lg max-w-4xl max-h-[90vh] p-0">
+          <DialogHeader className="p-6 pb-0">
+            <DialogTitle>Aperçu du ticket</DialogTitle>
+          </DialogHeader>
 
-            {/* PREVIEW TICKET */}
-            <Dialog open={showTicketPreview} onOpenChange={setShowTicketPreview}>
-              <DialogContent className="bg-card border rounded-lg max-w-4xl max-h-[90vh] p-0">
-                <DialogHeader className="p-6 pb-0">
-                  <DialogTitle>Aperçu du ticket</DialogTitle>
-                </DialogHeader>
-
-                <div className="px-6 py-4 flex-1 overflow-hidden">
-                  {ticketData?.pdf_url && (
-                    <iframe
-                      src={ticketData.pdf_url}
-                      className="w-full h-[65vh] border rounded-md"
-                      title="Aperçu du ticket"
-                    />
-                  )}
-                </div>
+          <div className="px-6 py-4 flex-1 overflow-hidden">
+            {ticketData?.pdf_url && (
+              <iframe src={ticketData.pdf_url} className="w-full h-[65vh] border rounded-md" title="Aperçu du ticket" />
+            )}
+          </div>
 
           <DialogFooter className="px-6 py-4 border-t flex gap-2">
             <Button onClick={() => setShowTicketPreview(false)} variant="outline">

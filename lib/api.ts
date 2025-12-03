@@ -118,7 +118,6 @@ async function request<T = any>(method: string, url: string, body?: any): Promis
   }
 }
 
-
 /* ============================
       REQUEST (FORMDATA) — UPDATED
 ============================ */
@@ -171,7 +170,6 @@ async function requestFormData(method: string, url: string, data: any) {
 
   return json
 }
-
 
 /* ============================
       BLOB
@@ -306,6 +304,9 @@ export const api = {
     getOne: (id: string) => request("GET", `/tickets/${id}`),
     getByReservation: (id: string) => request("GET", `/tickets/by-reservation/${id}`),
     checkExists: (id: string) => request("GET", `/tickets/by-reservation/${id}`),
+
+    downloadPDF: (id: string) => getBlob(`/tickets/${id}/download`),
+    downloadImage: (id: string) => getBlob(`/tickets/${id}/download-image`),
   },
 
   /* SCAN */

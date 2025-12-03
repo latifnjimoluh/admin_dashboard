@@ -1,6 +1,10 @@
 "use client"
 
+import Users from "lucide-react/dist/esm/icons/users"
+import Ticket from "lucide-react/dist/esm/icons/ticket"
+import CreditCard from "lucide-react/dist/esm/icons/credit-card"
 import type { LucideIcon } from "lucide-react"
+
 
 interface StatCardProps {
   stat: {
@@ -16,12 +20,49 @@ interface StatCardProps {
   delay: number
 }
 
+/* ============================
+   STATS CONFIG
+===============================*/
+export const stats = [
+  {
+    title: "Utilisateurs",
+    icon: Users,
+    displayValue: 100,
+    value: 150,
+    gradient: "from-purple-500 to-indigo-500",
+    textColor: "text-white",
+    iconColor: "text-white",
+  },
+  {
+    title: "Tickets générés",
+    icon: Ticket,
+    displayValue: 50,
+    value: 100,
+    gradient: "from-pink-500 to-rose-500",
+    textColor: "text-white",
+    iconColor: "text-white",
+  },
+  {
+    title: "Paiements",
+    icon: CreditCard,
+    displayValue: 80,
+    value: 120,
+    gradient: "from-emerald-500 to-green-600",
+    textColor: "text-white",
+    iconColor: "text-white",
+  }
+]
+
+/* ============================
+   STAT CARD COMPONENT
+===============================*/
 export function StatCard({ stat, delay }: StatCardProps) {
   const Icon = stat.icon
   const formattedValue = stat.format ? stat.format(stat.displayValue) : stat.displayValue
 
-  // progress width (animation)
-  const progressPercent = (stat.displayValue / stat.value) * 100
+  const progressPercent = stat.value > 0
+    ? (stat.displayValue / stat.value) * 100
+    : 0
 
   return (
     <div
@@ -35,7 +76,7 @@ export function StatCard({ stat, delay }: StatCardProps) {
         className={`
           bg-gradient-to-br ${stat.gradient}
           rounded-xl p-6 border border-white/60 shadow-sm
-          transition-all duration-300 
+          transition-all duration-300
           hover:shadow-md hover:scale-[1.015]
         `}
       >
