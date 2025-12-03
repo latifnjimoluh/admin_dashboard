@@ -1,70 +1,82 @@
 "use client"
 
-import { useEffect } from "react"
-import { Html5Qrcode } from "html5-qrcode"
+import { useEffect, useRef } from "react"
+import { Html5QrcodeScanner, Html5QrcodeScanType } from "html5-qrcode"
 
-interface Props {
-  onScan: (decoded: string) => void
+interface QRScannerProps {
+  onScan: (decodedText: string) => void
+  onError?: (err: any) => void
+  elementId?: string
+  fps?: number
+  qrbox?: number
+  facingMode?: "user" | "environment"
 }
 
-export default function QRScanner({ onScan }: Props) {
+export default function QRScanner({
+  onScan,
+  onError,
+  elementId = "qr-reader",
+  fps = 10,
+  qrbox = 250,
+  facingMode = "environment",
+}: QRScannerProps) {
+  const scannerRef = useRef<Html5QrcodeScanner | null>(null)
+
   useEffect(() => {
-    const elementId = "qr-reader"
-    const scanner = new Html5Qrcode(elementId)
+    // safety: only run in browser
+    if (typeof window === "undefined") return
 
-    let isMounted = true
-
-    async function start() {
-      try {
-        // 🔥 1) Lister les caméras pour choisir la meilleure.
-        const devices = await Html5Qrcode.getCameras()
-
-        if (!devices || devices.length === 0) {
-          console.error("Aucune caméra trouvée")
-          return
-        }
-
-        // 🔥 2) Choisir la caméra arrière quand elle existe
-        let cameraId = devices[0].id
-        for (const cam of devices) {
-          if (cam.label.toLowerCase().includes("back")) {
-            cameraId = cam.id
-          }
-        }
-
-        await scanner.start(
-          { deviceId: cameraId },
-          {
-            fps: 12,
-            qrbox: { width: 280, height: 280 },
-            aspectRatio: 1.777,
-            disableFlip: false, // important pour caméra frontale
-          },
-          (decoded) => {
-            if (!isMounted) return
-
-            if (scanner._isScanning) {
-              scanner.stop().catch(() => {})
-            }
-
-            onScan(decoded)
-          },
-          () => {}
-        )
-      } catch (err) {
-        console.error("Erreur caméra :", err)
-      }
+    const config = {
+      fps,
+      qrbox: { width: qrbox, height: qrbox },
+      rememberLastUsedCamera: true,
+      // use camera directly (preferred)
+      qrRegion: undefined,
+      aspectRatio: 1.777778,
+      experimentalFeatures: { useBarCodeDetectorIfSupported: false },
     }
 
-    start()
+    const scanner = new Html5QrcodeScanner(
+      elementId,
+      config,
+      /* verbose */ false
+    )
+
+    // store ref so we can clear later
+    scannerRef.current = scanner
+
+    const success = (decodedText: string) => {
+      try {
+        // stop scanning immediately to avoid duplicates
+        scanner.clear().catch(() => {})
+      } catch {
+        // ignore
+      }
+      onScan(decodedText)
+    }
+
+    const failure = (err: any) => {
+      if (onError) onError(err)
+      // do not stop scanner on each error
+    }
+
+    // render scanner
+    try {
+      scanner.render(success, failure)
+    } catch (err) {
+      if (onError) onError(err)
+    }
 
     return () => {
-      isMounted = false
-      if (scanner._isScanning) {
-        scanner.stop().catch(() => {})
+      // cleanup
+      try {
+        scanner.clear().catch(() => {})
+      } catch {
+        // ignore
       }
+      scannerRef.current = null
     }
-  }, [onScan])
+  }, [elementId, fps, qrbox, onScan, onError, facingMode])
 
-  return <div id="qr-reader" className="w-full h-auto rounded-lg"></div>
+  return <div id={elementId} className="w-full" />
 }

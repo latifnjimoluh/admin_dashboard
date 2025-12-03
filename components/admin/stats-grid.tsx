@@ -10,7 +10,6 @@ const mockStats = [
     title: "Total Réservations",
     icon: Users,
     value: 142,
-    // Pastel Blue
     gradient: "from-[#e3e9ff] to-[#d6dfff]",
     textColor: "text-[#3b4d8c]",
     iconColor: "text-[#5a6fb8]",
@@ -20,7 +19,6 @@ const mockStats = [
     icon: CreditCard,
     value: 1240000,
     format: (val: number) => `${val.toLocaleString("fr-FR")} XAF`,
-    // Pastel Green
     gradient: "from-[#e5f6ea] to-[#d9eedf]",
     textColor: "text-[#3b7a4e]",
     iconColor: "text-[#58a879]",
@@ -29,7 +27,6 @@ const mockStats = [
     title: "Paiements partiels",
     icon: AlertCircle,
     value: 58,
-    // Pastel Yellow
     gradient: "from-[#f9f2d9] to-[#f3e8c3]",
     textColor: "text-[#8a6d1f]",
     iconColor: "text-[#d6b444]",
@@ -38,7 +35,6 @@ const mockStats = [
     title: "Tickets générés",
     icon: Ticket,
     value: 84,
-    // Pastel Purple
     gradient: "from-[#f1e4fb] to-[#e9d7f7]",
     textColor: "text-[#7b4ca0]",
     iconColor: "text-[#b07cd5]",
@@ -47,7 +43,6 @@ const mockStats = [
     title: "Entrées validées",
     icon: Check,
     value: 56,
-    // Pastel Red
     gradient: "from-[#fde4e4] to-[#f7d3d3]",
     textColor: "text-[#9b3a3a]",
     iconColor: "text-[#d66a6a]",
@@ -67,18 +62,19 @@ export function StatsGrid() {
         setLoading(true)
         setError(null)
 
-        // Fetch reservations, tickets and payments (use large pageSize to approximate totals)
-        const [resRes, resTickets, resPayments, resPacks] = await Promise.all([
+        const [resRes, resTickets, resPayments, resPacks, resScanStats] = await Promise.all([
           api.reservations.getAll("?page=1&pageSize=1000"),
           api.tickets.getAll(),
           api.payments.getAll(),
           api.packs.getAll("?is_active=true&page=1&pageSize=1000"),
+          api.scan.stats(),
         ])
 
         const reservationsRaw = resRes.data?.reservations || resRes.data || []
         const ticketsRaw = resTickets.data?.tickets || resTickets.data || []
         const paymentsRaw = resPayments.data?.payments || resPayments.data || []
         const packsRaw = resPacks.data?.packs || resPacks.data || []
+        const scanStatsData = resScanStats.data || {}
 
         const totalReservations = Array.isArray(reservationsRaw) ? reservationsRaw.length : 0
         const totalTickets = Array.isArray(ticketsRaw) ? ticketsRaw.length : 0
@@ -89,8 +85,14 @@ export function StatsGrid() {
           : 0
 
         const partialPayments = Array.isArray(reservationsRaw)
-          ? reservationsRaw.filter((r: any) => (r.total_paid || 0) < (r.total_price || 0)).length
+          ? reservationsRaw.filter((r: any) => {
+              const totalPrice = r.total_price || 0
+              const totalPaidAmount = r.total_paid || 0
+              return totalPaidAmount > 0 && totalPaidAmount < totalPrice
+            }).length
           : 0
+
+        const validatedEntries = scanStatsData.validated_entries || 0
 
         // Build updated stats based on mockStats order
         const updatedStats = [
@@ -98,12 +100,12 @@ export function StatsGrid() {
           { ...mockStats[1], value: totalPaid },
           { ...mockStats[2], value: partialPayments },
           { ...mockStats[3], value: totalTickets },
-          { ...mockStats[4], value: 0 }, // Entrées validées not available from summary
+          { ...mockStats[4], value: validatedEntries },
         ]
 
         if (!mounted) return
 
-        // Animate from 0 -> value similar to previous implementation
+        // Animate from 0 -> value
         const duration = 800
         const start = Date.now()
 
@@ -115,7 +117,7 @@ export function StatsGrid() {
             updatedStats.map((stat) => ({
               ...stat,
               displayValue: Math.floor((stat.value as number) * progress),
-            }))
+            })),
           )
 
           if (progress < 1) requestAnimationFrame(animate)

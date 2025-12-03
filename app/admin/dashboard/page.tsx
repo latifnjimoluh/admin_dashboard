@@ -12,14 +12,14 @@ export default function AdminDashboardPage() {
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    // Check if token exists
     const token = localStorage.getItem("admin_token")
     if (!token) {
       router.push("/admin/login")
-    } else {
-      setIsAuthenticated(true)
-      setIsLoading(false)
+      return
     }
+
+    setIsAuthenticated(true)
+    setIsLoading(false)
   }, [router])
 
   if (isLoading) {

@@ -122,8 +122,12 @@ async function requestFormData(method: string, url: string, data: any) {
 
   const form = new FormData()
 
-  form.append("amount", String(data.amount || ""))
-  form.append("method", String(data.method || ""))
+  if (data.amount !== undefined && data.amount !== "") {
+    form.append("amount", String(data.amount))
+  }
+  if (data.method !== undefined && data.method !== "") {
+    form.append("method", String(data.method))
+  }
 
   if (data.comment) form.append("comment", String(data.comment))
   if (data.proof && data.proof.name) form.append("proof", data.proof)
@@ -200,9 +204,7 @@ async function getBlob(endpointOrUrl: string) {
   const disposition = res.headers.get("content-disposition") || ""
 
   let filename
-  const match =
-    /filename\*=UTF-8''(.+)$/.exec(disposition) ||
-    /filename="?([^";]+)"?/.exec(disposition)
+  const match = /filename\*=UTF-8''(.+)$/.exec(disposition) || /filename="?([^";]+)"?/.exec(disposition)
 
   if (match) {
     try {
@@ -227,15 +229,13 @@ export const api = {
 
   /* AUTH */
   auth: {
-    login: (email: string, password: string) =>
-      request("POST", "/auth/login", { email, password }),
+    login: (email: string, password: string) => request("POST", "/auth/login", { email, password }),
 
     refresh: () => request("POST", "/auth/refresh"),
 
     logout: () => logout(),
   },
 
-  /* USERS */
   /* USERS */
   users: {
     list: () => request("GET", "/users"),
@@ -247,12 +247,8 @@ export const api = {
     me: () => request("GET", "/users/me"),
 
     /* 🔥 MODIFIER SON MOT DE PASSE */
-    updatePassword: (data: { oldPassword: string; newPassword: string }) =>
-      request("PUT", "/users/password", data),
+    updatePassword: (data: { oldPassword: string; newPassword: string }) => request("PUT", "/users/password", data),
   },
-
-  
-  
 
   /* PACKS */
   packs: {
@@ -279,22 +275,14 @@ export const api = {
       const isFile =
         data.proof &&
         typeof data.proof === "object" &&
-        "name" in data.proof &&
+        ("name" in data.proof || "stream" in data.proof) &&
         "size" in data.proof
 
       if (isFile) {
-        return requestFormData(
-          "POST",
-          `/reservations/${reservation_id}/payments`,
-          data
-        )
+        return requestFormData("POST", `/reservations/${reservation_id}/payments`, data)
       }
 
-      return request(
-        "POST",
-        `/reservations/${reservation_id}/payments`,
-        data
-      )
+      return request("POST", `/reservations/${reservation_id}/payments`, data)
     },
 
     delete: (reservation_id: string, payment_id: string) =>
@@ -311,32 +299,23 @@ export const api = {
   },
 
   /* SCAN */
-  /* ============================
-        SCAN
-  ============================ */
   scan: {
-    /* Décoder un QR brut */
-    decode: (qr: string) =>
-      request("POST", "/tickets/decode", { qr_payload: qr }),
+    decode: (qr: string) => request("POST", "/scan/decode", { qr_payload: qr }),
 
-    /* Valider l’entrée d’un participant (ticket_number + participant_id) */
-    validate: (data: { ticket_number: string; participant_id: number }) =>
-      request("POST", "/scan/validate", data),
+    search: (ticket_number: string) => request("POST", "/scan/search", { ticket_number }),
 
-    /* Scanner un QR signé JWT et récupérer toutes les infos */
-    jwtValidate: (qr: string) =>
-      request("POST", "/scan/validate", { qr_payload: qr }),
+    validate: (data: { ticket_number: string; participant_id: number }) => request("POST", "/scan/validate", data),
 
-    /* Statistiques globales */
+    jwtValidate: (qr: string) => request("POST", "/scan/validate", { qr_payload: qr }),
+
     stats: () => request("GET", "/scan/stats"),
   },
 
-
   /* GENERIC */
-  get: <T>(e: string) => request<T>("GET", e),
-  post: <T>(e: string, b?: any) => request<T>("POST", e, b),
-  put: <T>(e: string, b?: any) => request<T>("PUT", e, b),
-  delete: <T>(e: string) => request<T>("DELETE", e),
+  get: (e: string) => request("GET", e),
+  post: (e: string, b?: any) => request("POST", e, b),
+  put: (e: string, b?: any) => request("PUT", e, b),
+  delete: (e: string) => request("DELETE", e),
 
   getBlob,
 }
