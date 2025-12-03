@@ -73,6 +73,8 @@ export default function ReservationDetailsPage() {
   method: "cash",
   file: null as File | null,
 })
+const [paymentError, setPaymentError] = useState("");
+
 
 
   useEffect(() => {
@@ -198,28 +200,60 @@ export default function ReservationDetailsPage() {
   }
 
   const handleAddPayment = async () => {
-    const amountValue = Number(newPayment.amount);
+  setPaymentError("");
 
-    if (!amountValue || isNaN(amountValue) || amountValue <= 0) {
-      console.error("Montant invalide");
+  const amountValue = Number(newPayment.amount);
+
+  if (!amountValue || isNaN(amountValue) || amountValue <= 0) {
+    setPaymentError("Veuillez saisir un montant valide.");
+    return;
+  }
+
+  try {
+    await api.payments.add(reservation!.id, {
+      amount: amountValue,
+      method: newPayment.method,
+      proof: newPayment.file || undefined,
+    });
+
+    await loadReservation();
+    setShowAddPayment(false);
+
+    setNewPayment({
+      amount: "",
+      method: "cash",
+      file: null,
+    });
+  } catch (err: any) {
+  console.error("Erreur ajout paiement :", err);
+
+  // ✔ Récupération correcte du message backend
+  const backendMsg =
+    err?.data?.message ||   // cas FormData
+    err?.message ||         // message retourné par api.ts
+    "";
+
+  // 🔥 Détection du dépassement
+  if (backendMsg.includes("dépasse le montant restant")) {
+
+    const match = backendMsg.match(/montant restant\s*\((\d+)\s?XAF\)/i);
+    const montantRestant = match ? match[1] : null;
+
+    if (montantRestant) {
+      setPaymentError(
+        `La somme saisie est supérieure au montant restant (${montantRestant} XAF). Bien vouloir réessayer avec ${montantRestant} XAF ou moins.`
+      );
       return;
     }
+  }
 
-    try {
-      await api.payments.add(reservation!.id, {
-        amount: amountValue,
-        method: newPayment.method,
-        proof: newPayment.file || undefined,
-      });
+  // 🔥 Afficher le message backend si aucun cas particulier
+  setPaymentError(
+    backendMsg || "Une erreur est survenue lors de l'ajout du paiement."
+  );
+}
 
-      await loadReservation();
-      setShowAddPayment(false);
-      setNewPayment({ amount: "", method: "cash", file: null });
-    } catch (err) {
-      console.error("Erreur ajout paiement :", err);
-    }
-  };
-
+};
 
 
 
@@ -724,6 +758,13 @@ export default function ReservationDetailsPage() {
             <DialogTitle>Ajouter un paiement</DialogTitle>
           </DialogHeader>
 
+          {/* 🔥 MESSAGE D'ERREUR AFFICHÉ ICI */}
+          {paymentError && (
+            <div className="text-red-600 bg-red-100 border border-red-300 p-2 rounded-md text-sm">
+              {paymentError}
+            </div>
+          )}
+
           <div className="space-y-4 py-4">
             <div>
               <label className="text-sm">Montant (XAF)</label>
@@ -732,7 +773,10 @@ export default function ReservationDetailsPage() {
                 min="1"
                 value={newPayment.amount}
                 onChange={(e) =>
-                  setNewPayment({ ...newPayment, amount: e.target.value.replace(/[^0-9]/g, "") })
+                  setNewPayment({
+                    ...newPayment,
+                    amount: e.target.value.replace(/[^0-9]/g, ""),
+                  })
                 }
                 className="w-full px-3 py-2 bg-input border rounded-md"
                 placeholder="0"
@@ -744,14 +788,17 @@ export default function ReservationDetailsPage() {
               <select
                 id="payment-method"
                 value={newPayment.method}
-                onChange={(e) => setNewPayment({ ...newPayment, method: e.target.value })}
+                onChange={(e) =>
+                  setNewPayment({ ...newPayment, method: e.target.value })
+                }
                 className="w-full px-3 py-2 bg-input border rounded-md"
               >
                 <option value="cash">Cash</option>
                 <option value="momo">Mobile Money</option>
-                <option value="card">Carte bancaire</option>
+                <option value="orange">Orange Money</option>
               </select>
             </div>
+
             <div>
               <label className="text-sm">Justificatif (image ou PDF)</label>
               <input
@@ -765,39 +812,44 @@ export default function ReservationDetailsPage() {
                 }
                 className="w-full px-3 py-2 bg-input border rounded-md"
               />
-
             </div>
-
           </div>
 
           <DialogFooter>
-            <button onClick={() => setShowAddPayment(false)} className="px-4 py-2 bg-secondary rounded-md">
+            <button
+              onClick={() => setShowAddPayment(false)}
+              className="px-4 py-2 bg-secondary rounded-md"
+            >
               Annuler
             </button>
 
-            <button onClick={handleAddPayment} className="px-4 py-2 bg-primary text-primary-foreground rounded-md">
+            <button
+              onClick={handleAddPayment}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
+            >
               Ajouter
             </button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* PREVIEW TICKET */}
-      <Dialog open={showTicketPreview} onOpenChange={setShowTicketPreview}>
-        <DialogContent className="bg-card border rounded-lg max-w-4xl max-h-[90vh] p-0">
-          <DialogHeader className="p-6 pb-0">
-            <DialogTitle>Aperçu du ticket</DialogTitle>
-          </DialogHeader>
 
-          <div className="px-6 py-4 flex-1 overflow-hidden">
-            {ticketData?.pdf_url && (
-              <iframe
-                src={ticketData.pdf_url}
-                className="w-full h-[65vh] border rounded-md"
-                title="Aperçu du ticket"
-              />
-            )}
-          </div>
+            {/* PREVIEW TICKET */}
+            <Dialog open={showTicketPreview} onOpenChange={setShowTicketPreview}>
+              <DialogContent className="bg-card border rounded-lg max-w-4xl max-h-[90vh] p-0">
+                <DialogHeader className="p-6 pb-0">
+                  <DialogTitle>Aperçu du ticket</DialogTitle>
+                </DialogHeader>
+
+                <div className="px-6 py-4 flex-1 overflow-hidden">
+                  {ticketData?.pdf_url && (
+                    <iframe
+                      src={ticketData.pdf_url}
+                      className="w-full h-[65vh] border rounded-md"
+                      title="Aperçu du ticket"
+                    />
+                  )}
+                </div>
 
           <DialogFooter className="px-6 py-4 border-t flex gap-2">
             <Button onClick={() => setShowTicketPreview(false)} variant="outline">

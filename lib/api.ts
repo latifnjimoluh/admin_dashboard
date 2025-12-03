@@ -67,7 +67,7 @@ async function refreshAccessToken() {
 }
 
 /* ============================
-      REQUEST (JSON)
+      REQUEST (JSON) — UPDATED
 ============================ */
 async function request<T = any>(method: string, url: string, body?: any): Promise<ApiResponse<T>> {
   const token = getAccessToken()
@@ -83,6 +83,7 @@ async function request<T = any>(method: string, url: string, body?: any): Promis
 
   let res = await fetch(`${BASE_URL}${url}`, options)
 
+  // 🔁 TRY REFRESH TOKEN
   if (res.status === 401 && getRefreshToken()) {
     const refreshed = await refreshAccessToken()
     if (refreshed) {
@@ -100,10 +101,14 @@ async function request<T = any>(method: string, url: string, body?: any): Promis
   const json = await res.json().catch(() => null)
 
   if (!res.ok) {
-    const error = new Error(json?.message || "Erreur API") as any
-    error.status = res.status
-    error.data = json
-    throw error
+    // 🛑 IMPORTANT :
+    // ❌ Ne plus utiliser "new Error()" → Next/Turbopack affiche un stack error inutile
+    // ✔ On renvoie un objet simple (err.data, err.status, err.message)
+    throw {
+      message: json?.message || "Erreur API",
+      status: res.status,
+      data: json,
+    }
   }
 
   return {
@@ -113,8 +118,9 @@ async function request<T = any>(method: string, url: string, body?: any): Promis
   }
 }
 
+
 /* ============================
-      REQUEST (FORMDATA)
+      REQUEST (FORMDATA) — UPDATED
 ============================ */
 async function requestFormData(method: string, url: string, data: any) {
   const token = getAccessToken()
@@ -128,7 +134,6 @@ async function requestFormData(method: string, url: string, data: any) {
   if (data.method !== undefined && data.method !== "") {
     form.append("method", String(data.method))
   }
-
   if (data.comment) form.append("comment", String(data.comment))
   if (data.proof && data.proof.name) form.append("proof", data.proof)
 
@@ -146,7 +151,10 @@ async function requestFormData(method: string, url: string, data: any) {
       const retryToken = getAccessToken()
       res = await fetch(absoluteUrl, {
         ...options,
-        headers: { ...(options.headers || {}), Authorization: `Bearer ${retryToken}` },
+        headers: {
+          ...(options.headers || {}),
+          Authorization: `Bearer ${retryToken}`,
+        },
       })
     }
   }
@@ -154,14 +162,16 @@ async function requestFormData(method: string, url: string, data: any) {
   const json = await res.json().catch(() => null)
 
   if (!res.ok) {
-    const error = new Error(json?.message || "Erreur API") as any
-    error.status = res.status
-    error.data = json
-    throw error
+    throw {
+      message: json?.message || "Erreur API",
+      status: res.status,
+      data: json,
+    }
   }
 
   return json
 }
+
 
 /* ============================
       BLOB
