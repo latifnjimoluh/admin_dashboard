@@ -340,7 +340,7 @@ export default function TicketsPage() {
         </form>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="bg-card border border-border rounded-lg p-6">
             <p className="text-muted-foreground text-sm mb-2">Tickets valides</p>
             <p className="text-3xl font-bold text-green-700">{tickets.filter((t) => t.status === "valid").length}</p>
@@ -348,10 +348,6 @@ export default function TicketsPage() {
           <div className="bg-card border border-border rounded-lg p-6">
             <p className="text-muted-foreground text-sm mb-2">Tickets utilisés</p>
             <p className="text-3xl font-bold text-blue-700">{tickets.filter((t) => t.status === "used").length}</p>
-          </div>
-          <div className="bg-card border border-border rounded-lg p-6">
-            <p className="text-muted-foreground text-sm mb-2">Tickets annulés</p>
-            <p className="text-3xl font-bold text-red-700">{tickets.filter((t) => t.status === "cancelled").length}</p>
           </div>
         </div>
 

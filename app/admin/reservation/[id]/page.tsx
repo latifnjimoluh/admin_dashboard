@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter, useParams } from "next/navigation"
 import { AdminLayout } from "@/components/admin/admin-layout"
-import { ArrowLeft, Plus, Download, Eye, FileText, Trash2 } from "lucide-react"
+import { ArrowLeft, Plus, Download, Eye, FileText } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
@@ -24,7 +24,7 @@ interface Payment {
   amount: number
   method: string
   createdAt: string
-  creator?: { name?: string; role?: string }
+  creator?: { name?: string; email?: string }
 }
 
 interface ActionLog {
@@ -32,7 +32,7 @@ interface ActionLog {
   action_type: string
   createdAt: string
   meta: any
-  user?: { name?: string; role?: string }
+  user?: { name?: string; email?: string }
 }
 
 interface ReservationData {
@@ -72,7 +72,7 @@ export default function ReservationDetailsPage() {
   // ============================================
   // ÉTATS - Données principales
   // ============================================
-  
+
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [loadingData, setLoadingData] = useState(true)
   const [loadingTicket, setLoadingTicket] = useState(false)
@@ -82,7 +82,7 @@ export default function ReservationDetailsPage() {
   // ============================================
   // ÉTATS - Modales et formulaires
   // ============================================
-  
+
   const [showAddPayment, setShowAddPayment] = useState(false)
   const [showTicketPreview, setShowTicketPreview] = useState(false)
   const [newPayment, setNewPayment] = useState({
@@ -95,8 +95,8 @@ export default function ReservationDetailsPage() {
   // ============================================
   // ÉTATS - Prévisualisation et téléchargement
   // ============================================
-  
-  const [previewMode, setPreviewMode] = useState<'iframe' | 'loading'>('loading')
+
+  const [previewMode, setPreviewMode] = useState<"iframe" | "loading">("loading")
   const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null)
   const [downloadingTicket, setDownloadingTicket] = useState(false)
 
@@ -163,7 +163,7 @@ export default function ReservationDetailsPage() {
           action_type: a.action_type,
           createdAt: a.createdAt,
           meta: a.meta,
-          user: a.user,
+          user: a.user || a.creator, // ✅ Ajouter fallback sur creator
         })),
       }
 
@@ -201,27 +201,53 @@ export default function ReservationDetailsPage() {
 
   const mapActionDescription = (a: ActionLog) => {
     if (a.meta?.description) return a.meta.description
+    
     if (a.action_type === "payment.add") {
       const method = a.meta.method === "cash" ? "espèces" : a.meta.method === "momo" ? "Mobile Money" : a.meta.method
-      return `Un paiement de ${a.meta.amount} XAF a été enregistré (${method})`
+      
+      // ✅ Chercher le paiement correspondant pour récupérer le creator
+      const relatedPayment = reservation?.payments.find(p => p.amount === a.meta.amount)
+      
+      return {
+        text: `Un paiement de ${a.meta.amount} XAF a été enregistré (${method})`,
+        user: relatedPayment?.creator || a.user || a.meta?.creator
+      }
     }
+    
     if (a.action_type === "payment.delete") {
-      return `Un paiement de ${a.meta.amount} XAF a été annulé`
+      return {
+        text: `Un paiement de ${a.meta.amount} XAF a été annulé`,
+        user: a.user || a.meta?.creator
+      }
     }
+    
     if (a.action_type === "ticket.generate") {
-      return `Le ticket ${a.meta.ticket_number || "N/A"} a été généré avec succès`
+      return {
+        text: `Le ticket ${a.meta.ticket_number || "N/A"} a été généré avec succès`,
+        user: a.user || a.meta?.creator
+      }
     }
-    return a.action_type
+    
+    return {
+      text: a.action_type,
+      user: a.user || a.meta?.creator
+    }
   }
 
-  const formatUserLabel = (user?: { name?: string; role?: string } | null) => {
-    if (!user) return "Admin"
+  const formatUserLabel = (user?: { name?: string; email?: string } | null) => {
+    if (!user) return "Système"
+    
     const name = user.name?.trim()
-    const role = user.role?.trim()
-    if (name && role) return `${name} (${role})`
+    const email = user.email?.trim()
+
+    // ✅ Format : Nom (Email) - comme dans le tableau des paiements
+    if (name && email) {
+      return `${name} (${email})`
+    }
     if (name) return name
-    if (role) return role
-    return "Admin"
+    if (email) return email
+    
+    return "Système"
   }
 
   const mapStatus = (status: string) => {
@@ -247,6 +273,10 @@ export default function ReservationDetailsPage() {
       setPaymentError("Veuillez saisir un montant valide.")
       return
     }
+    if (newPayment.method !== "cash" && !newPayment.file) {
+      setPaymentError("Un justificatif est obligatoire pour ce mode de paiement.")
+      return
+    }
 
     try {
       await api.payments.add(reservation!.id, {
@@ -269,20 +299,18 @@ export default function ReservationDetailsPage() {
       const backendMsg = err?.data?.message || err?.message || ""
 
       if (backendMsg.includes("dépasse le montant restant")) {
-        const match = backendMsg.match(/montant restant\s*\((\d+)\s?XAF\)/i)
+        const match = backendMsg.match(/montant restant\s*$$(\d+)\s?XAF$$/i)
         const montantRestant = match ? match[1] : null
 
         if (montantRestant) {
           setPaymentError(
-            `La somme saisie est supérieure au montant restant (${montantRestant} XAF). Bien vouloir réessayer avec ${montantRestant} XAF ou moins.`
+            `La somme saisie est supérieure au montant restant (${montantRestant} XAF). Bien vouloir réessayer avec ${montantRestant} XAF ou moins.`,
           )
           return
         }
       }
 
-      setPaymentError(
-        backendMsg || "Une erreur est survenue lors de l'ajout du paiement."
-      )
+      setPaymentError(backendMsg || "Une erreur est survenue lors de l'ajout du paiement.")
     }
   }
 
@@ -297,29 +325,29 @@ export default function ReservationDetailsPage() {
    */
   const loadPdfForPreview = async () => {
     if (!ticketData?.pdf_url) return
-    
-    setPreviewMode('loading')
-    
+
+    setPreviewMode("loading")
+
     try {
       console.log("[Preview] Chargement du PDF pour prévisualisation")
-      
+
       const ticketId = ticketData.id || reservation?.id
-      
+
       if (!ticketId) {
         throw new Error("ID du ticket introuvable")
       }
-      
+
       // ✅ Télécharger le PDF avec authentification via headers
       const { blob } = await api.getBlob(`/tickets/${ticketId}/preview`)
-      
+
       console.log("[Preview] Blob reçu, taille:", blob.size)
-      
+
       // Créer une URL blob locale (pas de problème d'auth avec iframe)
       const blobUrl = window.URL.createObjectURL(blob)
-      
+
       setPdfBlobUrl(blobUrl)
-      setPreviewMode('iframe')
-      
+      setPreviewMode("iframe")
+
       console.log("[Preview] PDF chargé avec succès")
     } catch (error: any) {
       console.error("[Preview] Erreur:", error)
@@ -389,34 +417,32 @@ export default function ReservationDetailsPage() {
     if (!ticketData?.ticket_number || !reservation?.id) return
 
     setDownloadingTicket(true)
-    
+
     try {
       console.log("[Download] Début du téléchargement depuis preview")
-      
+
       const ticketId = ticketData.id || reservation.id
       const { blob, filename } = await api.getBlob(`/tickets/${ticketId}/download`)
-      
+
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement("a")
       link.href = url
       link.download = filename || `ticket-${ticketData.ticket_number}.pdf`
       link.style.display = "none"
-      
+
       document.body.appendChild(link)
       link.click()
-      
+
       setTimeout(() => {
         document.body.removeChild(link)
         window.URL.revokeObjectURL(url)
         console.log("[Download] Téléchargement terminé")
       }, 100)
-      
     } catch (error: any) {
       console.error("[Download] Erreur:", error)
-      
-      const isIDMInterception = error.message?.includes("Failed to fetch") || 
-                                error.message?.includes("ERR_FAILED")
-      
+
+      const isIDMInterception = error.message?.includes("Failed to fetch") || error.message?.includes("ERR_FAILED")
+
       if (!isIDMInterception) {
         alert("Erreur lors du téléchargement. Veuillez réessayer.")
       }
@@ -435,36 +461,34 @@ export default function ReservationDetailsPage() {
     }
 
     setDownloadingTicket(true)
-    
+
     try {
       console.log("[Download] Début du téléchargement du ticket")
-      
+
       const ticketId = ticketData.id || reservation.id
       const { blob, filename } = await api.getBlob(`/tickets/${ticketId}/download`)
-      
+
       console.log("[Download] Blob reçu, taille:", blob.size)
-      
+
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement("a")
       link.href = url
       link.download = filename || `ticket-${ticketData.ticket_number}.pdf`
       link.style.display = "none"
-      
+
       document.body.appendChild(link)
       link.click()
-      
+
       setTimeout(() => {
         document.body.removeChild(link)
         window.URL.revokeObjectURL(url)
         console.log("[Download] Téléchargement terminé")
       }, 100)
-      
     } catch (error: any) {
       console.error("[Download] Erreur:", error)
-      
-      const isIDMInterception = error.message?.includes("Failed to fetch") || 
-                                error.message?.includes("ERR_FAILED")
-      
+
+      const isIDMInterception = error.message?.includes("Failed to fetch") || error.message?.includes("ERR_FAILED")
+
       if (!isIDMInterception) {
         alert("Erreur lors du téléchargement du ticket. Veuillez réessayer.")
       } else {
@@ -480,14 +504,14 @@ export default function ReservationDetailsPage() {
    */
   const handleClosePreview = () => {
     // ✅ Nettoyer la blob URL pour libérer la mémoire
-    if (pdfBlobUrl && pdfBlobUrl.startsWith('blob:')) {
+    if (pdfBlobUrl && pdfBlobUrl.startsWith("blob:")) {
       window.URL.revokeObjectURL(pdfBlobUrl)
       console.log("[Preview] Blob URL libérée")
     }
-    
+
     setPdfBlobUrl(null)
     setShowTicketPreview(false)
-    setPreviewMode('loading')
+    setPreviewMode("loading")
   }
 
   /**
@@ -634,8 +658,8 @@ export default function ReservationDetailsPage() {
 
       // Montant restant
       ctx.textAlign = "left"
-      ctx.font = "bold 16px Arial"
       ctx.fillStyle = "#000000"
+      ctx.font = "bold 16px Arial"
       ctx.fillText("Montant restant", 50, 510)
       ctx.fillStyle = "#ea580c"
       ctx.font = "bold 24px Arial"
@@ -666,10 +690,10 @@ export default function ReservationDetailsPage() {
             p.method === "cash"
               ? "Espèces"
               : p.method === "momo"
-              ? "Mobile Money"
-              : p.method === "card"
-              ? "Carte bancaire"
-              : p.method
+                ? "Mobile Money"
+                : p.method === "card"
+                  ? "Carte bancaire"
+                  : p.method
 
           ctx.font = "14px Arial"
           ctx.fillStyle = "#555"
@@ -731,9 +755,7 @@ export default function ReservationDetailsPage() {
         <div className="space-y-3">
           <div>
             <p className="text-muted-foreground text-sm">Total payé</p>
-            <p className="text-2xl font-bold text-green-600">
-              {reservation.total_paid.toLocaleString()} XAF
-            </p>
+            <p className="text-2xl font-bold text-green-600">{reservation.total_paid.toLocaleString()} XAF</p>
           </div>
 
           <div>
@@ -770,7 +792,7 @@ export default function ReservationDetailsPage() {
                 className="w-full flex items-center justify-center bg-primary text-primary-foreground px-4 py-2 rounded-md hover:bg-primary/90 transition-colors font-medium"
               >
                 <Eye className="w-4 h-4 mr-2" />
-                Voir le ticket 
+                Voir le ticket
               </button>
               <button
                 onClick={handleDownloadTicket}
@@ -914,12 +936,13 @@ export default function ReservationDetailsPage() {
                 <div className="flex justify-between mb-4">
                   <h2 className="text-xl font-semibold">Paiements</h2>
 
-                  <button
-                    onClick={() => setShowAddPayment(true)}
-                    className="flex items-center gap-2 px-3 py-2 bg-primary text-primary-foreground rounded-md"
-                  >
-                    <Plus className="w-4 h-4" /> Ajouter
-                  </button>
+                    <button
+                      onClick={() => setShowAddPayment(true)}
+                      disabled={reservation.remaining_amount === 0}
+                      className="flex items-center gap-2 px-3 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Plus className="w-4 h-4" /> Ajouter
+                    </button>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -929,7 +952,7 @@ export default function ReservationDetailsPage() {
                         <th className="text-left py-2">Montant</th>
                         <th className="text-left py-2">Méthode</th>
                         <th className="text-left py-2">Date</th>
-                        <th className="text-left py-2">Admin</th>
+                        <th className="text-left py-2">Admin (Nom - Email)</th>
                       </tr>
                     </thead>
 
@@ -939,7 +962,7 @@ export default function ReservationDetailsPage() {
                           <td className="font-medium py-2">{p.amount.toLocaleString()} XAF</td>
                           <td className="py-2">{p.method}</td>
                           <td className="py-2">{new Date(p.createdAt).toLocaleDateString("fr-FR")}</td>
-                          <td className="py-2">{formatUserLabel(p.creator)}</td>
+                          <td className="py-2 text-sm">{formatUserLabel(p.creator)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -956,21 +979,23 @@ export default function ReservationDetailsPage() {
                 <h2 className="text-xl font-semibold mb-4">Historique des actions</h2>
 
                 <div className="space-y-3">
-                  {reservation.actions.map((a) => (
-                    <div key={a.id} className="p-3 bg-secondary rounded-md text-sm">
-                      <p className="font-medium">{mapActionDescription(a)}</p>
-                      <div className="flex justify-between items-center mt-1">
-                        <p className="text-xs text-muted-foreground">
+                  {reservation.actions.map((a) => {
+                    const description = mapActionDescription(a)
+                    const displayText = typeof description === 'string' ? description : description.text
+                    const displayUser = typeof description === 'string' ? a.user : description.user
+                    
+                    return (
+                      <div key={a.id} className="p-3 bg-secondary rounded-md text-sm">
+                        <p className="font-medium">{displayText}</p>
+                        <p className="text-xs text-muted-foreground mt-1">
                           {new Date(a.createdAt).toLocaleString("fr-FR")}
                         </p>
-                        {a.user && (
-                          <p className="text-xs text-muted-foreground">
-                            Par : <span className="font-medium">{formatUserLabel(a.user)}</span>
-                          </p>
-                        )}
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Par : <span className="font-medium">{formatUserLabel(displayUser)}</span>
+                        </p>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             </div>
@@ -988,9 +1013,7 @@ export default function ReservationDetailsPage() {
           </DialogHeader>
 
           {paymentError && (
-            <div className="text-red-600 bg-red-100 border border-red-300 p-2 rounded-md text-sm">
-              {paymentError}
-            </div>
+            <div className="text-red-600 bg-red-100 border border-red-300 p-2 rounded-md text-sm">{paymentError}</div>
           )}
 
           <div className="space-y-4 py-4">
@@ -1012,13 +1035,13 @@ export default function ReservationDetailsPage() {
             </div>
 
             <div>
-              <label htmlFor="payment-method" className="text-sm">Méthode</label>
+              <label htmlFor="payment-method" className="text-sm">
+                Méthode
+              </label>
               <select
                 id="payment-method"
                 value={newPayment.method}
-                onChange={(e) =>
-                  setNewPayment({ ...newPayment, method: e.target.value })
-                }
+                onChange={(e) => setNewPayment({ ...newPayment, method: e.target.value })}
                 className="w-full px-3 py-2 bg-input border rounded-md"
               >
                 <option value="cash">Cash</option>
@@ -1026,9 +1049,10 @@ export default function ReservationDetailsPage() {
                 <option value="orange">Orange Money</option>
               </select>
             </div>
-
             <div>
-              <label className="text-sm">Justificatif (image ou PDF)</label>
+              <label className="text-sm">
+                Justificatif (image ou PDF) {newPayment.method !== "cash" && <span className="text-red-500">*</span>}
+              </label>
               <input
                 type="file"
                 accept="image/*,application/pdf"
@@ -1040,27 +1064,25 @@ export default function ReservationDetailsPage() {
                 }
                 className="w-full px-3 py-2 bg-input border rounded-md"
               />
+              {newPayment.method !== "cash" && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Le justificatif est obligatoire pour ce mode de paiement
+                </p>
+              )}
             </div>
           </div>
-
           <DialogFooter>
-            <button
-              onClick={() => setShowAddPayment(false)}
-              className="px-4 py-2 bg-secondary rounded-md"
-            >
+            <button onClick={() => setShowAddPayment(false)} className="px-4 py-2 bg-secondary rounded-md">
               Annuler
             </button>
 
-            <button
-              onClick={handleAddPayment}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
-            >
+            <button onClick={handleAddPayment} className="px-4 py-2 bg-primary text-primary-foreground rounded-md">
               Ajouter
             </button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      
+
       {/* ✅ PREVIEW TICKET - MODAL AVEC BLOB URL */}
       <Dialog open={showTicketPreview} onOpenChange={handleClosePreview}>
         <DialogContent className="bg-card border rounded-lg max-w-5xl max-h-[95vh] p-0 flex flex-col">
@@ -1069,12 +1091,10 @@ export default function ReservationDetailsPage() {
               <div>
                 <DialogTitle className="text-xl">Aperçu du ticket</DialogTitle>
                 {ticketData && (
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Ticket N° {ticketData.ticket_number}
-                  </p>
+                  <p className="text-sm text-muted-foreground mt-1">Ticket N° {ticketData.ticket_number}</p>
                 )}
               </div>
-              
+
               <button
                 onClick={handleDownloadFromPreview}
                 disabled={downloadingTicket}
@@ -1096,7 +1116,7 @@ export default function ReservationDetailsPage() {
           </DialogHeader>
 
           <div className="flex-1 overflow-hidden p-6 pt-4">
-            {previewMode === 'loading' ? (
+            {previewMode === "loading" ? (
               <div className="flex flex-col items-center justify-center h-full space-y-4">
                 <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
                 <p className="text-muted-foreground">Chargement du ticket...</p>
@@ -1106,14 +1126,12 @@ export default function ReservationDetailsPage() {
                 src={pdfBlobUrl}
                 className="w-full h-full border rounded-lg shadow-sm"
                 title="Aperçu du ticket PDF"
-                style={{ minHeight: '600px' }}
+                style={{ minHeight: "600px" }}
               />
             ) : (
               <div className="flex flex-col items-center justify-center h-full space-y-4">
                 <FileText className="w-16 h-16 text-muted-foreground" />
-                <p className="text-muted-foreground">
-                  Impossible de charger l'aperçu
-                </p>
+                <p className="text-muted-foreground">Impossible de charger l'aperçu</p>
               </div>
             )}
           </div>
@@ -1123,12 +1141,9 @@ export default function ReservationDetailsPage() {
               <Eye className="w-4 h-4" />
               <span>Prévisualisation PDF</span>
             </div>
-            
+
             <div className="flex gap-2">
-              <Button 
-                onClick={handleClosePreview} 
-                variant="outline"
-              >
+              <Button onClick={handleClosePreview} variant="outline">
                 Fermer
               </Button>
             </div>
