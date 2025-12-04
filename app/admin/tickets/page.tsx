@@ -119,14 +119,38 @@ export default function TicketsPage() {
   }
 
   const handleDownloadTicket = async (ticket: Ticket) => {
-    if (ticket.id) {
-      try {
-        const { blob, filename } = await api.tickets.downloadPDF(ticket.id)
-        const { downloadUtils } = await import("@/lib/mobile-download")
-        await downloadUtils.smartDownload(blob, filename || `ticket-${ticket.ticket_number}.pdf`, "pdf")
-      } catch (err) {
-        console.error("[v0] Error downloading ticket:", err)
-      }
+    console.log("[v0] handleDownloadTicket START - ticket id:", ticket.id)
+
+    if (!ticket.id) {
+      console.error("[v0] handleDownloadTicket - no ticket id")
+      return
+    }
+
+    try {
+      console.log("[v0] handleDownloadTicket - calling api.tickets.downloadPDF")
+      const { blob, filename } = await api.tickets.downloadPDF(ticket.id)
+
+      console.log("[v0] handleDownloadTicket - received blob:", {
+        size: blob.size,
+        type: blob.type,
+        filename: filename,
+      })
+
+      console.log("[v0] handleDownloadTicket - importing downloadUtils")
+      const { downloadUtils } = await import("@/lib/mobile-download")
+
+      console.log("[v0] handleDownloadTicket - calling smartDownload")
+      await downloadUtils.smartDownload(blob, filename || `ticket-${ticket.ticket_number}.pdf`, "pdf")
+
+      console.log("[v0] handleDownloadTicket - SUCCESS")
+    } catch (err: any) {
+      console.error("[v0] handleDownloadTicket - ERROR:", {
+        message: err?.message,
+        status: err?.status,
+        stack: err?.stack,
+        fullError: err,
+      })
+      setError(err.message || "Erreur lors du téléchargement du ticket")
     }
   }
 

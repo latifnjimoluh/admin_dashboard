@@ -23,54 +23,57 @@ export const downloadUtils = {
   },
 
   /**
-   * iOS-specific: Open file in new tab for Files app save option
+   * iOS-specific: Save to Files app
+   * Uses standard download mechanism that triggers share menu
    */
   iosSaveToFiles(blob: Blob, filename: string) {
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
     a.download = filename
-    a.target = "_blank"
+
+    // Force download vs opening
+    a.setAttribute("download", filename)
+
     document.body.appendChild(a)
     a.click()
-    document.body.removeChild(a)
 
-    // Don't revoke immediately - let iOS handle it
-    setTimeout(() => URL.revokeObjectURL(url), 5000)
+    // Revoke after a delay to ensure download starts
+    setTimeout(() => {
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    }, 100)
   },
 
   /**
    * Android-specific: Save image to gallery
-   * Requires user permission and downloads as image
+   * For images, Android browsers will prompt to save to gallery
    */
   async androidSaveToGallery(blob: Blob, filename: string) {
-    try {
-      // Use FileSystem API if available (Android)
-      if ("persistent" in navigator.storage && "persist" in navigator.storage) {
-        const persistent = await navigator.storage.persist()
-        console.log("Persistent storage available:", persistent)
-      }
-    } catch (err) {
-      console.warn("FileSystem API not available")
-    }
-
-    // Fallback to standard download
+    // For images on Android, use standard download
+    // Android will prompt user to save to gallery
     this.downloadBlob(blob, filename)
   },
 
   /**
    * Universal download with device detection
+   * Improved device detection and proper blob handling
    */
   async smartDownload(blob: Blob, filename: string, type: "pdf" | "image" = "pdf") {
+    if (!blob || !(blob instanceof Blob)) {
+      console.error("[v0] Invalid blob provided to smartDownload")
+      throw new Error("Invalid blob provided")
+    }
+
     const ua = navigator.userAgent.toLowerCase()
-    const isIOS = /iphone|ipad|ipod/.test(ua)
+    const isIOS = /iphone|ipad|ipod/.test(ua) && !/windows phone/.test(ua)
     const isAndroid = /android/.test(ua)
 
-    if (isIOS && type === "pdf") {
-      // iOS: Use standard download which opens share menu
+    if (isIOS) {
+      // iOS: Use Files app save option
       this.iosSaveToFiles(blob, filename)
     } else if (isAndroid && type === "image") {
-      // Android: Download as image to gallery
+      // Android: Download image (will prompt to save to gallery)
       this.androidSaveToGallery(blob, filename)
     } else {
       // Desktop or generic fallback

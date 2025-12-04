@@ -1,6 +1,7 @@
 "use client"
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_HOST || "http://localhost:3001/api"
+console.log("[v0] API BASE_URL:", BASE_URL)
 
 /* ============================
       TYPES
@@ -16,7 +17,9 @@ export interface ApiResponse<T = any> {
 ============================ */
 function getAccessToken() {
   if (typeof window === "undefined") return null
-  return localStorage.getItem("admin_token")
+  const token = localStorage.getItem("admin_token")
+  console.log("[v0] getAccessToken:", token ? "token found" : "no token")
+  return token
 }
 
 function getRefreshToken() {
@@ -28,6 +31,7 @@ function saveTokens(access: string, refresh: string) {
   if (typeof window === "undefined") return
   localStorage.setItem("admin_token", access)
   localStorage.setItem("admin_refresh_token", refresh)
+  console.log("[v0] Tokens saved")
 }
 
 function logout() {
@@ -67,7 +71,7 @@ async function refreshAccessToken() {
 }
 
 /* ============================
-      REQUEST (JSON) — UPDATED
+      REQUEST (JSON)
 ============================ */
 async function request<T = any>(method: string, url: string, body?: any): Promise<ApiResponse<T>> {
   const token = getAccessToken()
@@ -101,9 +105,6 @@ async function request<T = any>(method: string, url: string, body?: any): Promis
   const json = await res.json().catch(() => null)
 
   if (!res.ok) {
-    // 🛑 IMPORTANT :
-    // ❌ Ne plus utiliser "new Error()" → Next/Turbopack affiche un stack error inutile
-    // ✔ On renvoie un objet simple (err.data, err.status, err.message)
     throw {
       message: json?.message || "Erreur API",
       status: res.status,
@@ -119,7 +120,7 @@ async function request<T = any>(method: string, url: string, body?: any): Promis
 }
 
 /* ============================
-      REQUEST (FORMDATA) — UPDATED
+      REQUEST (FORMDATA)
 ============================ */
 async function requestFormData(method: string, url: string, data: any) {
   const token = getAccessToken()
@@ -172,21 +173,30 @@ async function requestFormData(method: string, url: string, data: any) {
 }
 
 /* ============================
-      BLOB
+      BLOB — SIMPLIFIED DOWNLOAD
 ============================ */
 async function getBlob(endpointOrUrl: string) {
+  console.log("[v0] getBlob called with:", endpointOrUrl)
+
   const token = getAccessToken()
   const isAbsolute = /^https?:\/\//i.test(endpointOrUrl)
   const url = isAbsolute ? endpointOrUrl : `${BASE_URL}${endpointOrUrl}`
+
+  console.log("[v0] getBlob - final URL:", url)
 
   const options: RequestInit = {
     method: "GET",
     headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
   }
 
+  console.log("[v0] getBlob - Sending request with token:", token ? "yes" : "no")
+
   let res = await fetch(url, options)
 
+  console.log("[v0] getBlob - Response status:", res.status)
+
   if (res.status === 401 && getRefreshToken()) {
+    console.log("[v0] getBlob - Token expired, refreshing...")
     const refreshed = await refreshAccessToken()
     if (refreshed) {
       const retryToken = getAccessToken()
@@ -197,36 +207,61 @@ async function getBlob(endpointOrUrl: string) {
           Authorization: `Bearer ${retryToken}`,
         },
       })
+      console.log("[v0] getBlob - Retry response status:", res.status)
     }
   }
 
   if (!res.ok) {
     const text = await res.text().catch(() => null)
-    const error = new Error(text || `Erreur ${res.status}`) as any
-    error.status = res.status
-    error.data = text
-    throw error
+    console.error("[v0] getBlob - Request failed:", {
+      status: res.status,
+      statusText: res.statusText,
+      responseText: text?.substring(0, 200),
+    })
+    throw new Error(text || `Erreur ${res.status}`)
   }
 
+  console.log("[v0] getBlob - Response OK, converting to blob...")
   const blob = await res.blob()
-  const disposition = res.headers.get("content-disposition") || ""
+  console.log("[v0] getBlob - Blob size:", blob.size, "bytes")
 
+  const disposition = res.headers.get("content-disposition") || ""
   let filename
+
   const match = /filename\*=UTF-8''(.+)$/.exec(disposition) || /filename="?([^";]+)"?/.exec(disposition)
 
   if (match) {
     try {
       filename = decodeURIComponent(match[1])
+      console.log("[v0] getBlob - Decoded filename:", filename)
     } catch {
       filename = match[1]
     }
   }
 
-  return {
-    blob,
-    filename,
-    contentType: res.headers.get("content-type") || undefined,
+  return { blob, filename, contentType: res.headers.get("content-type") || undefined }
+}
+
+function directDownload(endpoint: string, filename: string) {
+  console.log("[v0] directDownload called:", endpoint)
+  const token = getAccessToken()
+  const url = `${BASE_URL}${endpoint}`
+  console.log("[v0] directDownload URL:", url)
+
+  const link = document.createElement("a")
+  link.href = url
+
+  if (token) {
+    link.setAttribute("data-token", token)
   }
+
+  link.setAttribute("download", filename)
+  link.style.display = "none"
+
+  document.body.appendChild(link)
+  console.log("[v0] directDownload - triggering download")
+  link.click()
+  document.body.removeChild(link)
 }
 
 /* ============================
@@ -251,10 +286,8 @@ export const api = {
     update: (id: string, data: any) => request("PUT", `/users/${id}`, data),
     delete: (id: string) => request("DELETE", `/users/${id}`),
 
-    /* 🔥 RÉCUPÉRER L’UTILISATEUR CONNECTÉ */
     me: () => request("GET", "/users/me"),
 
-    /* 🔥 MODIFIER SON MOT DE PASSE */
     updatePassword: (data: { oldPassword: string; newPassword: string }) => request("PUT", "/users/password", data),
   },
 
@@ -305,8 +338,14 @@ export const api = {
     getByReservation: (id: string) => request("GET", `/tickets/by-reservation/${id}`),
     checkExists: (id: string) => request("GET", `/tickets/by-reservation/${id}`),
 
-    downloadPDF: (id: string) => getBlob(`/tickets/${id}/download`),
-    downloadImage: (id: string) => getBlob(`/tickets/${id}/download-image`),
+    downloadPDF: (id: string, ticketNumber: string) => {
+      console.log("[v0] downloadPDF called with id:", id)
+      directDownload(`/tickets/${id}/download`, `ticket-${ticketNumber}.pdf`)
+    },
+
+    downloadImage: (id: string, ticketNumber: string) => {
+      directDownload(`/tickets/${id}/download-image`, `qr-${ticketNumber}.png`)
+    },
   },
 
   /* SCAN */
@@ -329,6 +368,7 @@ export const api = {
   delete: (e: string) => request("DELETE", e),
 
   getBlob,
+  directDownload,
 }
 
 export default api

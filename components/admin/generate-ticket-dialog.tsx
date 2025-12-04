@@ -56,14 +56,12 @@ export function GenerateTicketDialog({
     setError(null)
 
     try {
-      console.log("[v0] Starting ticket generation for reservation:", reservationId)
       const response = (await api.tickets.generate(reservationId)) as TicketResponse
 
       if (!response.ticket) {
         throw new Error("Invalid response from server")
       }
 
-      console.log("[v0] Ticket generated successfully:", response.ticket.ticket_number)
       setTicketData(response.ticket)
       setStep("preview")
       onSuccess?.()
@@ -80,10 +78,15 @@ export function GenerateTicketDialog({
     setDownloadLoading("pdf")
     try {
       const { blob, filename } = await api.tickets.downloadPDF(ticketData.id)
+
+      if (!blob || blob.size === 0) {
+        throw new Error("PDF file is empty or invalid")
+      }
+
       await downloadUtils.smartDownload(blob, filename || `ticket-${ticketData.ticket_number}.pdf`, "pdf")
     } catch (err) {
       console.error("[v0] PDF download error:", err)
-      setError("Failed to download PDF")
+      setError(err instanceof Error ? err.message : "Failed to download PDF")
     } finally {
       setDownloadLoading(null)
     }
@@ -95,10 +98,15 @@ export function GenerateTicketDialog({
     setDownloadLoading("image")
     try {
       const { blob, filename } = await api.tickets.downloadImage(ticketData.id)
+
+      if (!blob || blob.size === 0) {
+        throw new Error("Image file is empty or invalid")
+      }
+
       await downloadUtils.smartDownload(blob, filename || `qr-${ticketData.ticket_number}.png`, "image")
     } catch (err) {
       console.error("[v0] Image download error:", err)
-      setError("Failed to download image")
+      setError(err instanceof Error ? err.message : "Failed to download image")
     } finally {
       setDownloadLoading(null)
     }

@@ -3,10 +3,14 @@
 import { useEffect, useState } from "react"
 import { useRouter, useParams } from "next/navigation"
 import { AdminLayout } from "@/components/admin/admin-layout"
-import { ArrowLeft, Plus, Download, Eye } from "lucide-react"
+import { ArrowLeft, Plus, Download, Eye, FileText, Trash2 } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
+
+// ============================================
+// INTERFACES
+// ============================================
 
 interface Participant {
   id: string
@@ -49,24 +53,36 @@ interface ReservationData {
 }
 
 interface TicketData {
+  id?: string
   ticket_number: string
   qr_data_url: string
   pdf_url: string
   generated_at: string
-  id: string
 }
+
+// ============================================
+// COMPOSANT PRINCIPAL
+// ============================================
 
 export default function ReservationDetailsPage() {
   const router = useRouter()
   const params = useParams()
   const reservationId = params.id as string
 
+  // ============================================
+  // ÉTATS - Données principales
+  // ============================================
+  
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [loadingData, setLoadingData] = useState(true)
+  const [loadingTicket, setLoadingTicket] = useState(false)
   const [reservation, setReservation] = useState<ReservationData | null>(null)
   const [ticketData, setTicketData] = useState<TicketData | null>(null)
-  const [loadingTicket, setLoadingTicket] = useState(false)
 
+  // ============================================
+  // ÉTATS - Modales et formulaires
+  // ============================================
+  
   const [showAddPayment, setShowAddPayment] = useState(false)
   const [showTicketPreview, setShowTicketPreview] = useState(false)
   const [newPayment, setNewPayment] = useState({
@@ -76,6 +92,18 @@ export default function ReservationDetailsPage() {
   })
   const [paymentError, setPaymentError] = useState("")
 
+  // ============================================
+  // ÉTATS - Prévisualisation et téléchargement
+  // ============================================
+  
+  const [previewMode, setPreviewMode] = useState<'iframe' | 'loading'>('loading')
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null)
+  const [downloadingTicket, setDownloadingTicket] = useState(false)
+
+  // ============================================
+  // EFFETS - Authentification et chargement initial
+  // ============================================
+
   useEffect(() => {
     if (typeof window === "undefined") return
     if (!localStorage.getItem("admin_token")) {
@@ -84,6 +112,14 @@ export default function ReservationDetailsPage() {
       setIsAuthenticated(true)
     }
   }, [router])
+
+  useEffect(() => {
+    if (isAuthenticated) loadReservation()
+  }, [isAuthenticated])
+
+  // ============================================
+  // FONCTIONS - Chargement des données
+  // ============================================
 
   const loadReservation = async () => {
     setLoadingData(true)
@@ -159,9 +195,9 @@ export default function ReservationDetailsPage() {
     }
   }
 
-  useEffect(() => {
-    if (isAuthenticated) loadReservation()
-  }, [isAuthenticated])
+  // ============================================
+  // FONCTIONS - Formatage et mapping
+  // ============================================
 
   const mapActionDescription = (a: ActionLog) => {
     if (a.meta?.description) return a.meta.description
@@ -198,6 +234,10 @@ export default function ReservationDetailsPage() {
     return variants[status] || { class: "badge-en-attente", label: status }
   }
 
+  // ============================================
+  // FONCTIONS - Gestion des paiements
+  // ============================================
+
   const handleAddPayment = async () => {
     setPaymentError("")
 
@@ -226,48 +266,233 @@ export default function ReservationDetailsPage() {
     } catch (err: any) {
       console.error("Erreur ajout paiement :", err)
 
-      // ✔ Récupération correcte du message backend
-      const backendMsg =
-        err?.data?.message || // cas FormData
-        err?.message || // message retourné par api.ts
-        ""
+      const backendMsg = err?.data?.message || err?.message || ""
 
-      // 🔥 Détection du dépassement
       if (backendMsg.includes("dépasse le montant restant")) {
-        const match = backendMsg.match(/montant restant\s*$$(\d+)\s?XAF$$/i)
+        const match = backendMsg.match(/montant restant\s*\((\d+)\s?XAF\)/i)
         const montantRestant = match ? match[1] : null
 
         if (montantRestant) {
           setPaymentError(
-            `La somme saisie est supérieure au montant restant (${montantRestant} XAF). Bien vouloir réessayer avec ${montantRestant} XAF ou moins.`,
+            `La somme saisie est supérieure au montant restant (${montantRestant} XAF). Bien vouloir réessayer avec ${montantRestant} XAF ou moins.`
           )
           return
         }
       }
 
-      // 🔥 Afficher le message backend si aucun cas particulier
-      setPaymentError(backendMsg || "Une erreur est survenue lors de l'ajout du paiement.")
+      setPaymentError(
+        backendMsg || "Une erreur est survenue lors de l'ajout du paiement."
+      )
     }
   }
 
-  const handleViewTicket = () => {
+  // ============================================
+  // FONCTIONS - Gestion des tickets
+  // ============================================
+
+  /**
+   * ✅ SOLUTION 1 : Utiliser Blob URL (Recommandée)
+   * Télécharge le PDF via getBlob et crée une URL blob locale
+   * Avantage : Plus sécurisé, pas de token dans l'URL
+   */
+  const loadPdfForPreview = async () => {
+    if (!ticketData?.pdf_url) return
+    
+    setPreviewMode('loading')
+    
+    try {
+      console.log("[Preview] Chargement du PDF pour prévisualisation")
+      
+      const ticketId = ticketData.id || reservation?.id
+      
+      if (!ticketId) {
+        throw new Error("ID du ticket introuvable")
+      }
+      
+      // ✅ Télécharger le PDF avec authentification via headers
+      const { blob } = await api.getBlob(`/tickets/${ticketId}/preview`)
+      
+      console.log("[Preview] Blob reçu, taille:", blob.size)
+      
+      // Créer une URL blob locale (pas de problème d'auth avec iframe)
+      const blobUrl = window.URL.createObjectURL(blob)
+      
+      setPdfBlobUrl(blobUrl)
+      setPreviewMode('iframe')
+      
+      console.log("[Preview] PDF chargé avec succès")
+    } catch (error: any) {
+      console.error("[Preview] Erreur:", error)
+      alert("Erreur lors du chargement du ticket. Veuillez réessayer.")
+      setShowTicketPreview(false)
+    }
+  }
+
+  /**
+   * ✅ ALTERNATIVE : Utiliser token temporaire
+   * Génère un token JWT temporaire pour sécuriser l'iframe
+   * Décommentez cette fonction si vous préférez cette approche
+   */
+  /*
+  const loadPdfForPreviewWithToken = async () => {
+    if (!ticketData?.pdf_url) return
+    
+    setPreviewMode('loading')
+    
+    try {
+      console.log("[Preview] Génération du token temporaire")
+      
+      const ticketId = ticketData.id || reservation?.id
+      
+      if (!ticketId) {
+        throw new Error("ID du ticket introuvable")
+      }
+      
+      // 1. Générer un token temporaire (valable 5 minutes)
+      const tokenRes = await api.post(`/tickets/${ticketId}/preview-token`)
+      const previewToken = tokenRes.data.previewToken
+      
+      console.log("[Preview] Token temporaire généré")
+      
+      // 2. Construire l'URL avec le token
+      const apiBase = process.env.NEXT_PUBLIC_API_HOST || "http://localhost:3001/api"
+      const previewUrl = `${apiBase}/tickets/${ticketId}/preview?token=${encodeURIComponent(previewToken)}`
+      
+      setPdfBlobUrl(previewUrl)
+      setPreviewMode('iframe')
+      
+      console.log("[Preview] URL de prévisualisation créée")
+    } catch (error: any) {
+      console.error("[Preview] Erreur:", error)
+      alert("Erreur lors du chargement du ticket. Veuillez réessayer.")
+      setShowTicketPreview(false)
+    }
+  }
+  */
+
+  /**
+   * Ouvre la modal de prévisualisation et charge le PDF
+   */
+  const handleViewTicket = async () => {
     if (ticketData?.pdf_url) {
       setShowTicketPreview(true)
+      await loadPdfForPreview()
+      // OU si vous utilisez la version avec token :
+      // await loadPdfForPreviewWithToken()
     }
   }
 
-  const handleDownloadTicket = async () => {
-    if (ticketData?.pdf_url && ticketData?.id) {
-      try {
-        const { blob, filename } = await api.tickets.downloadPDF(ticketData.id)
-        const { downloadUtils } = await import("@/lib/mobile-download")
-        await downloadUtils.smartDownload(blob, filename || `ticket-${ticketData.ticket_number}.pdf`, "pdf")
-      } catch (err) {
-        console.error("[v0] Error downloading ticket:", err)
+  /**
+   * Télécharge le ticket depuis la modal de prévisualisation
+   */
+  const handleDownloadFromPreview = async () => {
+    if (!ticketData?.ticket_number || !reservation?.id) return
+
+    setDownloadingTicket(true)
+    
+    try {
+      console.log("[Download] Début du téléchargement depuis preview")
+      
+      const ticketId = ticketData.id || reservation.id
+      const { blob, filename } = await api.getBlob(`/tickets/${ticketId}/download`)
+      
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = filename || `ticket-${ticketData.ticket_number}.pdf`
+      link.style.display = "none"
+      
+      document.body.appendChild(link)
+      link.click()
+      
+      setTimeout(() => {
+        document.body.removeChild(link)
+        window.URL.revokeObjectURL(url)
+        console.log("[Download] Téléchargement terminé")
+      }, 100)
+      
+    } catch (error: any) {
+      console.error("[Download] Erreur:", error)
+      
+      const isIDMInterception = error.message?.includes("Failed to fetch") || 
+                                error.message?.includes("ERR_FAILED")
+      
+      if (!isIDMInterception) {
+        alert("Erreur lors du téléchargement. Veuillez réessayer.")
       }
+    } finally {
+      setDownloadingTicket(false)
     }
   }
 
+  /**
+   * Télécharge le ticket depuis le bouton principal (hors modal)
+   */
+  const handleDownloadTicket = async () => {
+    if (!ticketData?.ticket_number || !reservation?.id) {
+      console.error("Données manquantes pour le téléchargement")
+      return
+    }
+
+    setDownloadingTicket(true)
+    
+    try {
+      console.log("[Download] Début du téléchargement du ticket")
+      
+      const ticketId = ticketData.id || reservation.id
+      const { blob, filename } = await api.getBlob(`/tickets/${ticketId}/download`)
+      
+      console.log("[Download] Blob reçu, taille:", blob.size)
+      
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = filename || `ticket-${ticketData.ticket_number}.pdf`
+      link.style.display = "none"
+      
+      document.body.appendChild(link)
+      link.click()
+      
+      setTimeout(() => {
+        document.body.removeChild(link)
+        window.URL.revokeObjectURL(url)
+        console.log("[Download] Téléchargement terminé")
+      }, 100)
+      
+    } catch (error: any) {
+      console.error("[Download] Erreur:", error)
+      
+      const isIDMInterception = error.message?.includes("Failed to fetch") || 
+                                error.message?.includes("ERR_FAILED")
+      
+      if (!isIDMInterception) {
+        alert("Erreur lors du téléchargement du ticket. Veuillez réessayer.")
+      } else {
+        console.log("[Download] Téléchargement intercepté par le gestionnaire de téléchargements")
+      }
+    } finally {
+      setDownloadingTicket(false)
+    }
+  }
+
+  /**
+   * Ferme la modal de prévisualisation et nettoie les ressources
+   */
+  const handleClosePreview = () => {
+    // ✅ Nettoyer la blob URL pour libérer la mémoire
+    if (pdfBlobUrl && pdfBlobUrl.startsWith('blob:')) {
+      window.URL.revokeObjectURL(pdfBlobUrl)
+      console.log("[Preview] Blob URL libérée")
+    }
+    
+    setPdfBlobUrl(null)
+    setShowTicketPreview(false)
+    setPreviewMode('loading')
+  }
+
+  /**
+   * Génère un nouveau ticket pour la réservation
+   */
   const handleGenerateTicket = async () => {
     setLoadingTicket(true)
     try {
@@ -287,7 +512,10 @@ export default function ReservationDetailsPage() {
     }
   }
 
-  // --- Modifié : génération du bon avec logo optionnel ---
+  // ============================================
+  // FONCTIONS - Génération du bon d'avancement
+  // ============================================
+
   const generateBonAvancement = () => {
     if (!reservation) return
 
@@ -296,7 +524,7 @@ export default function ReservationDetailsPage() {
     canvas.height = 800
     const ctx = canvas.getContext("2d")!
 
-    const logoSrc = "/logo.png" // place ton logo dans /public/logo.png
+    const logoSrc = "/logo.png"
 
     const drawAll = (logoImg?: HTMLImageElement) => {
       // Fond blanc
@@ -307,7 +535,7 @@ export default function ReservationDetailsPage() {
       ctx.fillStyle = "#1a1a1a"
       ctx.fillRect(0, 0, canvas.width, 120)
 
-      // Si logo fourni, l'afficher à gauche, sinon on laisse le texte centré
+      // Logo et titre
       if (logoImg) {
         const logoW = 100
         const logoH = 80
@@ -316,23 +544,19 @@ export default function ReservationDetailsPage() {
         try {
           ctx.drawImage(logoImg, logoX, logoY, logoW, logoH)
         } catch (e) {
-          // ignore si drawImage échoue
+          console.error("Erreur chargement logo:", e)
         }
-        // Titre déplacé pour laisser la place au logo
         ctx.fillStyle = "#ffffff"
         ctx.font = "bold 24px Arial"
         ctx.textAlign = "left"
         ctx.fillText("Movie in the Park", 150, 52)
-
         ctx.font = "14px Arial"
         ctx.fillText("Bon d'avancement", 150, 78)
       } else {
-        // Pas de logo : titre centré
         ctx.fillStyle = "#ffffff"
         ctx.font = "bold 28px Arial"
         ctx.textAlign = "left"
         ctx.fillText("Movie in the Park", 30, 60)
-
         ctx.font = "16px Arial"
         ctx.fillText("Bon d'avancement", 30, 90)
       }
@@ -345,7 +569,7 @@ export default function ReservationDetailsPage() {
       ctx.font = "bold 16px Arial"
       ctx.fillText(new Date().toLocaleDateString("fr-FR"), canvas.width - 30, 85)
 
-      // Section Informations du payeur
+      // Informations du payeur
       ctx.textAlign = "left"
       ctx.fillStyle = "#333333"
       ctx.font = "bold 18px Arial"
@@ -417,7 +641,8 @@ export default function ReservationDetailsPage() {
       ctx.font = "bold 24px Arial"
       ctx.textAlign = "right"
       ctx.fillText(`${reservation.remaining_amount.toLocaleString()} XAF`, canvas.width - 50, 510)
-      // ==== DERNIERS PAIEMENTS ==== //
+
+      // Derniers paiements
       ctx.textAlign = "left"
       ctx.fillStyle = "#333333"
       ctx.font = "bold 18px Arial"
@@ -425,7 +650,6 @@ export default function ReservationDetailsPage() {
 
       let y = 590
 
-      // On récupère les 3 paiements les plus récents
       const lastPayments = [...reservation.payments]
         .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         .slice(0, 3)
@@ -442,10 +666,10 @@ export default function ReservationDetailsPage() {
             p.method === "cash"
               ? "Espèces"
               : p.method === "momo"
-                ? "Mobile Money"
-                : p.method === "card"
-                  ? "Carte bancaire"
-                  : p.method
+              ? "Mobile Money"
+              : p.method === "card"
+              ? "Carte bancaire"
+              : p.method
 
           ctx.font = "14px Arial"
           ctx.fillStyle = "#555"
@@ -482,22 +706,17 @@ export default function ReservationDetailsPage() {
       })
     }
 
-    // Tenter de charger le logo, si présent dans /public/logo.png
+    // Charger le logo
     const img = new Image()
     img.crossOrigin = "anonymous"
     img.src = logoSrc
-
-    // Si le logo charge correctement : dessiner avec le logo
-    img.onload = () => {
-      drawAll(img)
-    }
-
-    // Si erreur de chargement (fichier absent, CORS...), dessiner sans logo
-    img.onerror = () => {
-      drawAll(undefined)
-    }
+    img.onload = () => drawAll(img)
+    img.onerror = () => drawAll(undefined)
   }
-  // --- Fin modification ---
+
+  // ============================================
+  // FONCTION - Rendu du résumé de paiement
+  // ============================================
 
   const renderPaymentSummary = () => {
     if (!reservation) return null
@@ -512,7 +731,9 @@ export default function ReservationDetailsPage() {
         <div className="space-y-3">
           <div>
             <p className="text-muted-foreground text-sm">Total payé</p>
-            <p className="text-2xl font-bold text-green-600">{reservation.total_paid.toLocaleString()} XAF</p>
+            <p className="text-2xl font-bold text-green-600">
+              {reservation.total_paid.toLocaleString()} XAF
+            </p>
           </div>
 
           <div>
@@ -549,14 +770,24 @@ export default function ReservationDetailsPage() {
                 className="w-full flex items-center justify-center bg-primary text-primary-foreground px-4 py-2 rounded-md hover:bg-primary/90 transition-colors font-medium"
               >
                 <Eye className="w-4 h-4 mr-2" />
-                Voir le ticket
+                Voir le ticket 
               </button>
               <button
                 onClick={handleDownloadTicket}
-                className="w-full flex items-center justify-center bg-secondary text-foreground px-4 py-2 rounded-md hover:bg-secondary/80 transition-colors font-medium"
+                disabled={downloadingTicket}
+                className="w-full flex items-center justify-center bg-secondary text-foreground px-4 py-2 rounded-md hover:bg-secondary/80 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <Download className="w-4 h-4 mr-2" />
-                Télécharger le ticket
+                {downloadingTicket ? (
+                  <>
+                    <div className="w-4 h-4 mr-2 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    Téléchargement...
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4 mr-2" />
+                    Télécharger le ticket
+                  </>
+                )}
               </button>
             </>
           )}
@@ -572,9 +803,17 @@ export default function ReservationDetailsPage() {
     )
   }
 
+  // ============================================
+  // RENDU - Guard clause
+  // ============================================
+
   if (!isAuthenticated || !reservation) return null
 
   const badge = mapStatus(reservation.status)
+
+  // ============================================
+  // RENDU PRINCIPAL
+  // ============================================
 
   return (
     <AdminLayout>
@@ -721,7 +960,9 @@ export default function ReservationDetailsPage() {
                     <div key={a.id} className="p-3 bg-secondary rounded-md text-sm">
                       <p className="font-medium">{mapActionDescription(a)}</p>
                       <div className="flex justify-between items-center mt-1">
-                        <p className="text-xs text-muted-foreground">{new Date(a.createdAt).toLocaleString("fr-FR")}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(a.createdAt).toLocaleString("fr-FR")}
+                        </p>
                         {a.user && (
                           <p className="text-xs text-muted-foreground">
                             Par : <span className="font-medium">{formatUserLabel(a.user)}</span>
@@ -746,9 +987,10 @@ export default function ReservationDetailsPage() {
             <DialogTitle>Ajouter un paiement</DialogTitle>
           </DialogHeader>
 
-          {/* 🔥 MESSAGE D'ERREUR AFFICHÉ ICI */}
           {paymentError && (
-            <div className="text-red-600 bg-red-100 border border-red-300 p-2 rounded-md text-sm">{paymentError}</div>
+            <div className="text-red-600 bg-red-100 border border-red-300 p-2 rounded-md text-sm">
+              {paymentError}
+            </div>
           )}
 
           <div className="space-y-4 py-4">
@@ -770,13 +1012,13 @@ export default function ReservationDetailsPage() {
             </div>
 
             <div>
-              <label htmlFor="payment-method" className="text-sm">
-                Méthode
-              </label>
+              <label htmlFor="payment-method" className="text-sm">Méthode</label>
               <select
                 id="payment-method"
                 value={newPayment.method}
-                onChange={(e) => setNewPayment({ ...newPayment, method: e.target.value })}
+                onChange={(e) =>
+                  setNewPayment({ ...newPayment, method: e.target.value })
+                }
                 className="w-full px-3 py-2 bg-input border rounded-md"
               >
                 <option value="cash">Cash</option>
@@ -802,38 +1044,94 @@ export default function ReservationDetailsPage() {
           </div>
 
           <DialogFooter>
-            <button onClick={() => setShowAddPayment(false)} className="px-4 py-2 bg-secondary rounded-md">
+            <button
+              onClick={() => setShowAddPayment(false)}
+              className="px-4 py-2 bg-secondary rounded-md"
+            >
               Annuler
             </button>
 
-            <button onClick={handleAddPayment} className="px-4 py-2 bg-primary text-primary-foreground rounded-md">
+            <button
+              onClick={handleAddPayment}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-md"
+            >
               Ajouter
             </button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* PREVIEW TICKET */}
-      <Dialog open={showTicketPreview} onOpenChange={setShowTicketPreview}>
-        <DialogContent className="bg-card border rounded-lg max-w-4xl max-h-[90vh] p-0">
-          <DialogHeader className="p-6 pb-0">
-            <DialogTitle>Aperçu du ticket</DialogTitle>
+      
+      {/* ✅ PREVIEW TICKET - MODAL AVEC BLOB URL */}
+      <Dialog open={showTicketPreview} onOpenChange={handleClosePreview}>
+        <DialogContent className="bg-card border rounded-lg max-w-5xl max-h-[95vh] p-0 flex flex-col">
+          <DialogHeader className="p-6 pb-4 border-b">
+            <div className="flex items-center justify-between">
+              <div>
+                <DialogTitle className="text-xl">Aperçu du ticket</DialogTitle>
+                {ticketData && (
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Ticket N° {ticketData.ticket_number}
+                  </p>
+                )}
+              </div>
+              
+              <button
+                onClick={handleDownloadFromPreview}
+                disabled={downloadingTicket}
+                className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {downloadingTicket ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    Téléchargement...
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4" />
+                    Télécharger
+                  </>
+                )}
+              </button>
+            </div>
           </DialogHeader>
 
-          <div className="px-6 py-4 flex-1 overflow-hidden">
-            {ticketData?.pdf_url && (
-              <iframe src={ticketData.pdf_url} className="w-full h-[65vh] border rounded-md" title="Aperçu du ticket" />
+          <div className="flex-1 overflow-hidden p-6 pt-4">
+            {previewMode === 'loading' ? (
+              <div className="flex flex-col items-center justify-center h-full space-y-4">
+                <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+                <p className="text-muted-foreground">Chargement du ticket...</p>
+              </div>
+            ) : pdfBlobUrl ? (
+              <iframe
+                src={pdfBlobUrl}
+                className="w-full h-full border rounded-lg shadow-sm"
+                title="Aperçu du ticket PDF"
+                style={{ minHeight: '600px' }}
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full space-y-4">
+                <FileText className="w-16 h-16 text-muted-foreground" />
+                <p className="text-muted-foreground">
+                  Impossible de charger l'aperçu
+                </p>
+              </div>
             )}
           </div>
 
-          <DialogFooter className="px-6 py-4 border-t flex gap-2">
-            <Button onClick={() => setShowTicketPreview(false)} variant="outline">
-              Fermer
-            </Button>
-            <Button onClick={handleDownloadTicket} className="bg-primary text-primary-foreground">
-              <Download className="w-4 h-4 mr-2" />
-              Télécharger
-            </Button>
+          <DialogFooter className="px-6 py-4 border-t flex justify-between items-center">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Eye className="w-4 h-4" />
+              <span>Prévisualisation PDF</span>
+            </div>
+            
+            <div className="flex gap-2">
+              <Button 
+                onClick={handleClosePreview} 
+                variant="outline"
+              >
+                Fermer
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
