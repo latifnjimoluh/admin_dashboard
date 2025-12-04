@@ -1,6 +1,6 @@
 "use client"
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_HOST || "http://localhost:3001/api"
+const BASE_URL = process.env.NEXT_PUBLIC_API_HOST || "http://localhost:4000/api"
 console.log("[v0] API BASE_URL:", BASE_URL)
 
 /* ============================

@@ -4,10 +4,10 @@ import type React from "react"
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { AdminLayout } from "@/components/admin/admin-layout"
-import { Search, Filter, Eye, Download, ChevronLeft, ChevronRight } from "lucide-react"
+import { Search, Filter, Eye, Download, ChevronLeft, ChevronRight, FileText } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
-import "@/lib/mobile-download" // Ensure the library is imported
 
 interface Ticket {
   id: string
@@ -22,6 +22,7 @@ interface Ticket {
     id: string
     payeur_name: string
     payeur_phone: string
+    payeur_email: string
     pack_name_snapshot: string
   }
 }
@@ -48,9 +49,12 @@ export default function TicketsPage() {
   })
   const [currentPage, setCurrentPage] = useState(1)
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null)
-  const [showQRModal, setShowQRModal] = useState(false)
+  const [showTicketPreview, setShowTicketPreview] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [isRegenerating, setIsRegenerating] = useState(false)
+  const [downloadingTicket, setDownloadingTicket] = useState(false)
+  const [loadingTicketDetails, setLoadingTicketDetails] = useState(false)
+  const [previewMode, setPreviewMode] = useState<'iframe' | 'loading'>('loading')
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null)
 
   useEffect(() => {
     const token = localStorage.getItem("admin_token")
@@ -113,74 +117,150 @@ export default function TicketsPage() {
     setCurrentPage(1)
   }
 
-  const handleViewTicket = (ticket: Ticket) => {
-    setSelectedTicket(ticket)
-    setShowQRModal(true)
+  /**
+   * Charge le PDF pour la prévisualisation avec blob URL
+   */
+  const loadPdfForPreview = async (ticketId: string) => {
+    setPreviewMode('loading')
+    
+    try {
+      console.log("[Preview] Chargement du PDF pour prévisualisation - ID:", ticketId)
+      
+      // Télécharger le PDF avec authentification via headers
+      const { blob } = await api.getBlob(`/tickets/${ticketId}/preview`)
+      
+      console.log("[Preview] Blob reçu, taille:", blob.size)
+      
+      // Créer une URL blob locale (pas de problème d'auth avec iframe)
+      const blobUrl = window.URL.createObjectURL(blob)
+      
+      setPdfBlobUrl(blobUrl)
+      setPreviewMode('iframe')
+      
+      console.log("[Preview] PDF chargé avec succès")
+    } catch (error: any) {
+      console.error("[Preview] Erreur:", error)
+      setError("Erreur lors du chargement du ticket. Veuillez réessayer.")
+      setShowTicketPreview(false)
+    }
   }
 
-  const handleDownloadTicket = async (ticket: Ticket) => {
-    console.log("[v0] handleDownloadTicket START - ticket id:", ticket.id)
+  /**
+   * Ouvre la modal de prévisualisation et charge le ticket
+   */
+  const handleViewTicket = async (ticket: Ticket) => {
+    setShowTicketPreview(true)
+    setLoadingTicketDetails(true)
+    
+    // Si les infos de réservation sont manquantes, les récupérer
+    if (!ticket.reservation || !ticket.reservation.payeur_name) {
+      try {
+        console.log("[ViewTicket] Récupération des détails du ticket:", ticket.ticket_number)
+        const response = await api.scan.decode(ticket.ticket_number)
+        
+        if (response.status === 200 && response.data?.ticket?.reservation) {
+          console.log("[ViewTicket] Détails récupérés:", response.data.reservation)
+          const enrichedTicket = {
+            ...ticket,
+            reservation: {
+              id: response.data.reservation.id,
+              payeur_name: response.data.reservation.payeur_name,
+              payeur_phone: response.data.reservation.payeur_phone,
+              payeur_email: response.data.reservation.payeur_email,
+              pack_name_snapshot: response.data.reservation.pack_name_snapshot,
+            }
+          }
+          setSelectedTicket(enrichedTicket)
+        } else {
+          console.log("[ViewTicket] Pas de données supplémentaires disponibles")
+          setSelectedTicket(ticket)
+        }
+      } catch (err) {
+        console.error("[ViewTicket] Erreur lors de la récupération des détails:", err)
+        setSelectedTicket(ticket)
+      }
+    } else {
+      setSelectedTicket(ticket)
+    }
+    
+    setLoadingTicketDetails(false)
 
+    // Charger le PDF pour prévisualisation
+    if (ticket.id && ticket.pdf_url) {
+      await loadPdfForPreview(ticket.id)
+    }
+  }
+
+  /**
+   * Télécharge le ticket depuis la modal de prévisualisation
+   */
+  const handleDownloadFromPreview = async () => {
+    if (!selectedTicket) return
+    await handleDownloadTicket(selectedTicket)
+  }
+
+  /**
+   * Télécharge le ticket
+   */
+  const handleDownloadTicket = async (ticket: Ticket) => {
     if (!ticket.id) {
-      console.error("[v0] handleDownloadTicket - no ticket id")
+      console.error("ID du ticket manquant")
       return
     }
 
+    setDownloadingTicket(true)
+
     try {
-      console.log("[v0] handleDownloadTicket - calling api.tickets.downloadPDF")
-      const { blob, filename } = await api.tickets.downloadPDF(ticket.id)
+      console.log("[Download] Début du téléchargement du ticket:", ticket.id)
 
-      console.log("[v0] handleDownloadTicket - received blob:", {
-        size: blob.size,
-        type: blob.type,
-        filename: filename,
-      })
+      const { blob, filename } = await api.getBlob(`/tickets/${ticket.id}/download`)
 
-      console.log("[v0] handleDownloadTicket - importing downloadUtils")
-      const { downloadUtils } = await import("@/lib/mobile-download")
+      console.log("[Download] Blob reçu, taille:", blob.size)
 
-      console.log("[v0] handleDownloadTicket - calling smartDownload")
-      await downloadUtils.smartDownload(blob, filename || `ticket-${ticket.ticket_number}.pdf`, "pdf")
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = filename || `ticket-${ticket.ticket_number}.pdf`
+      link.style.display = "none"
 
-      console.log("[v0] handleDownloadTicket - SUCCESS")
+      document.body.appendChild(link)
+      link.click()
+
+      setTimeout(() => {
+        document.body.removeChild(link)
+        window.URL.revokeObjectURL(url)
+        console.log("[Download] Téléchargement terminé")
+      }, 100)
     } catch (err: any) {
-      console.error("[v0] handleDownloadTicket - ERROR:", {
-        message: err?.message,
-        status: err?.status,
-        stack: err?.stack,
-        fullError: err,
-      })
-      setError(err.message || "Erreur lors du téléchargement du ticket")
+      console.error("[Download] Erreur:", err)
+
+      const isIDMInterception =
+        err.message?.includes("Failed to fetch") || err.message?.includes("ERR_FAILED")
+
+      if (!isIDMInterception) {
+        setError(err.message || "Erreur lors du téléchargement du ticket")
+      } else {
+        console.log("[Download] Téléchargement intercepté par le gestionnaire de téléchargements")
+      }
+    } finally {
+      setDownloadingTicket(false)
     }
   }
 
-  const handleRegenerate = async () => {
-    if (!selectedTicket) return
-
-    try {
-      setIsRegenerating(true)
-      const response = await api.post(`/tickets/${selectedTicket.id}/regenerate`)
-
-      if (response.status === 200) {
-        setSelectedTicket((prev) =>
-          prev
-            ? {
-                ...prev,
-                qr_data_url: response.data.qr_data_url,
-                pdf_url: response.data.pdf_url,
-              }
-            : null,
-        )
-        await loadTickets()
-      } else {
-        setError(response.message || "Erreur lors de la régénération du ticket")
-      }
-    } catch (err: any) {
-      console.error("Error regenerating ticket:", err)
-      setError(err.message || "Erreur lors de la régénération du ticket")
-    } finally {
-      setIsRegenerating(false)
+  /**
+   * Ferme la modal de prévisualisation et nettoie les ressources
+   */
+  const handleClosePreview = () => {
+    // Nettoyer la blob URL pour libérer la mémoire
+    if (pdfBlobUrl && pdfBlobUrl.startsWith('blob:')) {
+      window.URL.revokeObjectURL(pdfBlobUrl)
+      console.log("[Preview] Blob URL libérée")
     }
+    
+    setPdfBlobUrl(null)
+    setShowTicketPreview(false)
+    setPreviewMode('loading')
+    setSelectedTicket(null)
   }
 
   if (!isAuthenticated) {
@@ -341,7 +421,8 @@ export default function TicketsPage() {
                               {ticket.pdf_url && (
                                 <button
                                   onClick={() => handleDownloadTicket(ticket)}
-                                  className="inline-flex items-center gap-1 px-2 py-1 bg-secondary hover:bg-secondary/80 text-foreground rounded-md transition-colors text-xs font-medium"
+                                  disabled={downloadingTicket}
+                                  className="inline-flex items-center gap-1 px-2 py-1 bg-secondary hover:bg-secondary/80 text-foreground rounded-md transition-colors text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                   <Download className="w-4 h-4" />
                                   <span className="hidden sm:inline">PDF</span>
@@ -396,93 +477,88 @@ export default function TicketsPage() {
         </div>
       </div>
 
-      {/* QR Code Modal */}
-      {selectedTicket && (
-        <Dialog open={showQRModal} onOpenChange={setShowQRModal}>
-          <DialogContent className="bg-card border border-border max-w-2xl">
-            <DialogHeader>
-              <DialogTitle className="text-foreground">Détails du ticket</DialogTitle>
-            </DialogHeader>
-
-            <div className="space-y-6 py-6">
-              {selectedTicket.qr_data_url && (
-                <div className="flex flex-col items-center">
-                  <div className="w-56 h-56 bg-white p-4 rounded-lg flex items-center justify-center border border-gray-200">
-                    <img
-                      src={selectedTicket.qr_data_url || "/placeholder.svg"}
-                      alt="QR Code"
-                      className="w-full h-full object-contain"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-3 text-sm">
-                  <div>
-                    <p className="text-muted-foreground text-xs uppercase tracking-wide mb-1">N° Ticket</p>
-                    <p className="text-foreground font-mono font-semibold">{selectedTicket.ticket_number}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs uppercase tracking-wide mb-1">Statut</p>
-                    <span
-                      className={`badge ${getStatusBadge(selectedTicket.status).className} px-2 py-1 rounded text-xs font-medium inline-block`}
-                    >
-                      {getStatusBadge(selectedTicket.status).label}
-                    </span>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs uppercase tracking-wide mb-1">Généré le</p>
-                    <p className="text-foreground">
-                      {new Date(selectedTicket.generated_at).toLocaleDateString("fr-FR")}
+      {/* Preview Ticket - Modal avec PDF */}
+      <Dialog open={showTicketPreview} onOpenChange={handleClosePreview}>
+        <DialogContent className="bg-card border rounded-lg max-w-5xl max-h-[95vh] p-0 flex flex-col">
+          <DialogHeader className="p-6 pb-4 border-b">
+            <div className="flex items-center justify-between">
+              <div>
+                <DialogTitle className="text-xl">Aperçu du ticket</DialogTitle>
+                {selectedTicket && (
+                  <div className="mt-2 space-y-1">
+                    <p className="text-sm text-muted-foreground">
+                      Ticket N° <span className="font-mono font-semibold text-foreground">{selectedTicket.ticket_number}</span>
                     </p>
+                    {!loadingTicketDetails && selectedTicket.reservation && (
+                      <div className="flex gap-4 text-xs text-muted-foreground">
+                        <span>Payeur: <span className="text-foreground font-medium">{selectedTicket.reservation.payeur_name}</span></span>
+                        <span>Pack: <span className="text-foreground font-medium">{selectedTicket.reservation.pack_name_snapshot}</span></span>
+                      </div>
+                    )}
                   </div>
-                </div>
-
-                <div className="space-y-3 text-sm">
-                  <div>
-                    <p className="text-muted-foreground text-xs uppercase tracking-wide mb-1">Payeur</p>
-                    <p className="text-foreground font-medium">{selectedTicket.reservation?.payeur_name || "—"}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs uppercase tracking-wide mb-1">Pack</p>
-                    <p className="text-foreground">{selectedTicket.reservation?.pack_name_snapshot || "—"}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs uppercase tracking-wide mb-1">Téléphone</p>
-                    <p className="text-foreground">{selectedTicket.reservation?.payeur_phone || "—"}</p>
-                  </div>
-                </div>
+                )}
               </div>
-            </div>
-
-            <DialogFooter className="flex gap-2">
+              
               <button
-                className="px-4 py-2 bg-secondary hover:bg-secondary/80 text-foreground rounded-md transition-colors font-medium text-sm"
-                onClick={() => setShowQRModal(false)}
+                onClick={handleDownloadFromPreview}
+                disabled={downloadingTicket || loadingTicketDetails}
+                className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {downloadingTicket ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    Téléchargement...
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4" />
+                    Télécharger
+                  </>
+                )}
+              </button>
+            </div>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-hidden p-6 pt-4">
+            {loadingTicketDetails || previewMode === 'loading' ? (
+              <div className="flex flex-col items-center justify-center h-full space-y-4">
+                <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+                <p className="text-muted-foreground">Chargement du ticket...</p>
+              </div>
+            ) : pdfBlobUrl ? (
+              <iframe
+                src={pdfBlobUrl}
+                className="w-full h-full border rounded-lg shadow-sm"
+                title="Aperçu du ticket PDF"
+                style={{ minHeight: '600px' }}
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full space-y-4">
+                <FileText className="w-16 h-16 text-muted-foreground" />
+                <p className="text-muted-foreground">
+                  Impossible de charger l'aperçu du ticket
+                </p>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="px-6 py-4 border-t flex justify-between items-center">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Eye className="w-4 h-4" />
+              <span>Prévisualisation PDF</span>
+            </div>
+            
+            <div className="flex gap-2">
+              <Button 
+                onClick={handleClosePreview} 
+                variant="outline"
               >
                 Fermer
-              </button>
-              <button
-                onClick={handleRegenerate}
-                disabled={isRegenerating}
-                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-md transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isRegenerating ? "Régénération..." : "Régénérer"}
-              </button>
-              {selectedTicket.pdf_url && (
-                <button
-                  className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-accent text-primary-foreground rounded-md transition-colors font-medium text-sm"
-                  onClick={() => handleDownloadTicket(selectedTicket)}
-                >
-                  <Download className="w-4 h-4" />
-                  Télécharger PDF
-                </button>
-              )}
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AdminLayout>
   )
 }
