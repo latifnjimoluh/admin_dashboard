@@ -39,24 +39,33 @@ export default function PaymentsPage() {
   const loadPayments = async () => {
     try {
       setIsLoading(true)
-      const response = await api.payments.getAll()
-      
-      if (response.status === 200) {
-        const raw = response.data?.payments || response.data || []
-        
-        const mapped: Payment[] = raw.map((p: any) => ({
-          id: p.id,
-          nomPayeur: p.reservation?.payeur_name || "—",
-          telephone: p.reservation?.payeur_phone || "—",
-          montant: p.amount,
-          mode: p.method === "cash" ? "Cash" : p.method === "momo" ? "MoMo" : p.method,
-          date: new Date(p.createdAt).toLocaleDateString("fr-FR"),
-          admin: p.creator?.name || "Admin",
-          reservationId: p.reservation_id || p.reservation?.id,
-        }))
-        
-        setPayments(mapped)
-        setFilteredPayments(mapped)
+      try {
+        const response = await api.payments.getAll()
+
+        if (response.status === 200) {
+          const raw = response.data?.payments || response.data || []
+
+          const mapped: Payment[] = raw.map((p: any) => ({
+            id: p.id,
+            nomPayeur: p.reservation?.payeur_name || "—",
+            telephone: p.reservation?.payeur_phone || "—",
+            montant: p.amount,
+            mode: p.method === "cash" ? "Cash" : p.method === "momo" ? "MoMo" : p.method,
+            date: new Date(p.createdAt).toLocaleDateString("fr-FR"),
+            admin: p.creator?.name || "Admin",
+            reservationId: p.reservation_id || p.reservation?.id,
+          }))
+
+          setPayments(mapped)
+          setFilteredPayments(mapped)
+        }
+      } catch (apiError: any) {
+        // Better error handling
+        console.error("[v0] API Error:", apiError?.response?.data || apiError?.message || apiError)
+        if (apiError?.response?.status === 401) {
+          localStorage.removeItem("admin_token")
+          router.push("/admin/login")
+        }
       }
     } catch (err) {
       console.error("Erreur chargement paiements:", err)
@@ -70,7 +79,7 @@ export default function PaymentsPage() {
 
     if (search) {
       result = result.filter(
-        (p) => p.nomPayeur.toLowerCase().includes(search.toLowerCase()) || p.telephone.includes(search)
+        (p) => p.nomPayeur.toLowerCase().includes(search.toLowerCase()) || p.telephone.includes(search),
       )
     }
 
@@ -145,7 +154,8 @@ export default function PaymentsPage() {
           <div className="bg-card border border-border rounded-lg p-6">
             <p className="text-muted-foreground text-sm mb-2">Montant moyen</p>
             <p className="text-3xl font-bold text-blue-700">
-              {filteredPayments.length > 0 ? Math.round(totalMontant / filteredPayments.length).toLocaleString() : 0} XAF
+              {filteredPayments.length > 0 ? Math.round(totalMontant / filteredPayments.length).toLocaleString() : 0}{" "}
+              XAF
             </p>
           </div>
         </div>
@@ -200,8 +210,12 @@ export default function PaymentsPage() {
                         {payment.mode}
                       </span>
                     </td>
-                    <td className="px-4 md:px-6 py-3 text-sm text-muted-foreground whitespace-nowrap">{payment.date}</td>
-                    <td className="px-4 md:px-6 py-3 text-sm text-muted-foreground whitespace-nowrap">{payment.admin}</td>
+                    <td className="px-4 md:px-6 py-3 text-sm text-muted-foreground whitespace-nowrap">
+                      {payment.date}
+                    </td>
+                    <td className="px-4 md:px-6 py-3 text-sm text-muted-foreground whitespace-nowrap">
+                      {payment.admin}
+                    </td>
                     <td className="px-4 md:px-6 py-3 text-center whitespace-nowrap">
                       <button
                         onClick={() => router.push(`/admin/reservation/${payment.reservationId}`)}
