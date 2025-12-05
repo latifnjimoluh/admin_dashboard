@@ -25,6 +25,7 @@ export function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
     { href: "/admin/packs", label: "Packs", icon: Package },
     { href: "/admin/users", label: "Utilisateurs", icon: Users },
     { href: "/admin/settings", label: "Paramètres", icon: Settings },
+    { href: "/admin/audit", label: "Logs d'audit", icon: Settings },
   ]
 
   useEffect(() => {

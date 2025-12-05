@@ -172,6 +172,8 @@ async function requestFormData(method: string, url: string, data: any) {
   return json
 }
 
+
+
 /* ============================
       BLOB — SIMPLIFIED DOWNLOAD
 ============================ */
@@ -284,6 +286,7 @@ export const api = {
     list: () => request("GET", "/users"),
     create: (data: any) => request("POST", "/users", data),
     update: (id: string, data: any) => request("PUT", `/users/${id}`, data),
+    updateRole: (id: string, role: string) => request("PUT", `/users/${id}/role`, { role }),
     delete: (id: string) => request("DELETE", `/users/${id}`),
 
     me: () => request("GET", "/users/me"),
@@ -306,6 +309,8 @@ export const api = {
     create: (data: any) => request("POST", "/reservations", data),
     update: (id: string, data: any) => request("PUT", `/reservations/${id}`, data),
     cancel: (id: string) => request("POST", `/reservations/${id}/cancel`),
+    delete: (id: string) => request("DELETE", `/reservations/${id}`),
+    permanentlyDelete: (id: string) => request("DELETE", `/reservations/${id}/permanent`),
   },
 
   /* PAYMENTS */
@@ -346,6 +351,20 @@ export const api = {
     downloadImage: (id: string, ticketNumber: string) => {
       directDownload(`/tickets/${id}/download-image`, `qr-${ticketNumber}.png`)
     },
+  },
+
+  /* AUDIT */
+  audit: {
+    getAllLogs: (params = "") => request("GET", `/audit/logs?${params}`),
+
+    getUserLogs: (userId: string, params = "") =>
+      request("GET", `/audit/user/${userId}?${params}`),
+
+    getEntityLogs: (entityType: string, entityId: string, params = "") =>
+      request("GET", `/audit/entity/${entityType}/${entityId}?${params}`),
+
+    getLogsByPermission: (permission: string, params = "") =>
+      request("GET", `/audit/permission/${permission}?${params}`),
   },
 
   /* SCAN */
