@@ -172,8 +172,6 @@ async function requestFormData(method: string, url: string, data: any) {
   return json
 }
 
-
-
 /* ============================
       BLOB — SIMPLIFIED DOWNLOAD
 ============================ */
@@ -357,8 +355,7 @@ export const api = {
   audit: {
     getAllLogs: (params = "") => request("GET", `/audit/logs?${params}`),
 
-    getUserLogs: (userId: string, params = "") =>
-      request("GET", `/audit/user/${userId}?${params}`),
+    getUserLogs: (userId: string, params = "") => request("GET", `/audit/user/${userId}?${params}`),
 
     getEntityLogs: (entityType: string, entityId: string, params = "") =>
       request("GET", `/audit/entity/${entityType}/${entityId}?${params}`),
@@ -378,6 +375,12 @@ export const api = {
     jwtValidate: (qr: string) => request("POST", "/scan/validate", { qr_payload: qr }),
 
     stats: () => request("GET", "/scan/stats"),
+  },
+
+  /* TRACKING */
+  tracking: {
+    stats: () => request("GET", "/track/stats"),
+    evolution: (days = 30) => request("GET", `/track/evolution?days=${days}`),
   },
 
   /* GENERIC */

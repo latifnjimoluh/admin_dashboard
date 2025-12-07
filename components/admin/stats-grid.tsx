@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { StatCard } from "@/components/admin/stat-card"
 import { StatsGridSkeleton } from "@/components/admin/stats-grid-skeleton"
-import { Users, CreditCard, AlertCircle, Ticket, Check } from "lucide-react"
+import { Users, CreditCard, AlertCircle, Ticket, Check, Eye, BarChart3 } from "lucide-react"
 import { api } from "@/lib/api"
 import { cacheManager } from "@/lib/cache"
 
@@ -49,6 +49,31 @@ const mockStats = [
     textColor: "text-[#9b3a3a]",
     iconColor: "text-[#d66a6a]",
   },
+  {
+    title: "Total des visites",
+    icon: Eye,
+    value: 0,
+    gradient: "from-[#e8f5e9] to-[#c8e6c9]",
+    textColor: "text-[#2e7d32]",
+    iconColor: "text-[#558b2f]",
+  },
+  {
+    title: "Visiteurs uniques",
+    icon: Users,
+    value: 0,
+    gradient: "from-[#f3e5f5] to-[#e1bee7]",
+    textColor: "text-[#6a1b9a]",
+    iconColor: "text-[#8e24aa]",
+  },
+  {
+    title: "Moyenne par visiteur",
+    icon: BarChart3,
+    value: 0,
+    format: (val: number) => val.toFixed(2),
+    gradient: "from-[#fff3e0] to-[#ffe0b2]",
+    textColor: "text-[#e65100]",
+    iconColor: "text-[#ff6f00]",
+  },
 ]
 
 export function StatsGrid() {
@@ -90,12 +115,13 @@ export function StatsGrid() {
 
     const loadFreshStats = async () => {
       try {
-        const [resRes, resTickets, resPayments, resPacks, resScanStats] = await Promise.all([
+        const [resRes, resTickets, resPayments, resPacks, resScanStats, resTrackingStats] = await Promise.all([
           api.reservations.getAll("?page=1&pageSize=1000"),
           api.tickets.getAll(),
           api.payments.getAll(),
           api.packs.getAll("?is_active=true&page=1&pageSize=1000"),
           api.scan.stats(),
+          api.tracking.stats(),
         ])
 
         const reservationsRaw = resRes.data?.reservations || resRes.data || []
@@ -103,6 +129,7 @@ export function StatsGrid() {
         const paymentsRaw = resPayments.data?.payments || resPayments.data || []
         const packsRaw = resPacks.data?.packs || resPacks.data || []
         const scanStatsData = resScanStats.data || {}
+        const trackingStatsData = resTrackingStats.data || {}
 
         const totalReservations = Array.isArray(reservationsRaw) ? reservationsRaw.length : 0
         const totalTickets = Array.isArray(ticketsRaw) ? ticketsRaw.length : 0
@@ -122,6 +149,10 @@ export function StatsGrid() {
 
         const validatedEntries = scanStatsData.validated_entries || 0
 
+        const totalVisits = trackingStatsData.total_visits || 0
+        const uniqueVisitors = trackingStatsData.unique_visitors || 0
+        const averageVisitsPerUser = trackingStatsData.average_visits_per_user || 0
+
         // Build updated stats based on mockStats order
         const updatedStats = [
           { ...mockStats[0], value: totalReservations },
@@ -129,6 +160,9 @@ export function StatsGrid() {
           { ...mockStats[2], value: partialPayments },
           { ...mockStats[3], value: totalTickets },
           { ...mockStats[4], value: validatedEntries },
+          { ...mockStats[5], value: totalVisits },
+          { ...mockStats[6], value: uniqueVisitors },
+          { ...mockStats[7], value: averageVisitsPerUser },
         ]
 
         cacheManager.set("dashboard_stats", updatedStats, { expiryTime: 5 * 60 * 1000 })

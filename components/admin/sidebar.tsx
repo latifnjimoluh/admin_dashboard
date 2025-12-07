@@ -23,6 +23,7 @@ export function Sidebar({ isOpen = true, onToggle }: SidebarProps) {
     { href: "/admin/tickets", label: "Tickets", icon: Ticket },
     { href: "/admin/scan", label: "Contrôle d'entrée", icon: QrCode },
     { href: "/admin/packs", label: "Packs", icon: Package },
+    { href: "/admin/analytics", label: "Analytics visiteurs", icon: LayoutDashboard },
     { href: "/admin/users", label: "Utilisateurs", icon: Users },
     { href: "/admin/settings", label: "Paramètres", icon: Settings },
     { href: "/admin/audit", label: "Logs d'audit", icon: Settings },
