@@ -35,7 +35,7 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false)
 
   const [settings, setSettings] = useState({
-    lieu: "Parc National de Cameroun",
+    lieu: "Bastos, Mini Prix",
     dateEvenement: "2025-12-20",
     heureFilm1: "19:00",
     heureFilm2: "21:30",
