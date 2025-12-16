@@ -397,10 +397,10 @@ export default function ReservationsPage() {
                           {userRole === "superadmin" && (
                             <button
                               onClick={() => openPermanentDeleteDialog(r)}
-                              disabled={r.statut !== "en_attente"}
+                              disabled={r.statut !== "en_attente" && r.statut !== "annulée" }
                               className="inline-flex items-center gap-2 px-3 py-2 bg-destructive hover:bg-destructive/90 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded-md transition-colors text-sm font-medium"
                               title={
-                                r.statut !== "en_attente"
+                                r.statut !== "en_attente" 
                                   ? "Impossible de supprimer définitivement une réservation qui n'est pas en attente"
                                   : "Supprimer définitivement la réservation"
                               }
